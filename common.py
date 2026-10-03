@@ -125,6 +125,9 @@ class Tee:
         for s in self.streams:
             s.flush()
 
+    def __getattr__(self, name):  # isatty, fileno, encoding, ... -> real stdout
+        return getattr(self.streams[0], name)
+
 
 def start_run(name, args):
     """runs/<name>_<time>/: log.txt gets everything printed."""

@@ -62,11 +62,11 @@ def score_fn(model, enc):
 
 
 def train_samples(d, per_user):
-    """(user, history, target) with random cut points in each train seq."""
+    """(user, history, target, target rating) with random cut points in each train seq."""
     out = []
     for u, s in enumerate(d.split("train")[0]):
         for t in random.sample(range(1, len(s)), min(per_user, len(s) - 1)):
-            out.append((u, s[:t], s[t]))
+            out.append((u, s[:t], s[t], d.ratings[u][t]))
     random.shuffle(out)
     return out
 
@@ -85,6 +85,9 @@ def train(args):
     enc = Encoder(d, tok, args.history, device, args.prompt)
     model = GenRec(d.n_items, args.backbone, args.lora_r, dtype, args.grad_ckpt).to(device)
     model.llm.print_trainable_parameters()
+    if args.resume:  # continue from a saved checkpoint (LoRA + head); a fresh LR schedule starts
+        missing = model.load_state_dict(torch.load(args.resume, map_location=device), strict=False)
+        print(f"resumed from {args.resume} ({len(missing.unexpected_keys)} unexpected keys)")
     print("example prompt:\n" + verbalize(d, d.seqs[0][:-2], d.ratings[0], args.history, args.prompt))
 
     opt = torch.optim.AdamW([
@@ -106,9 +109,13 @@ def train(args):
         samples = train_samples(d, args.samples_per_user)
         total = window = 0.0
         for step, i in enumerate(range(0, len(samples), args.batch_size), 1):
-            users, hist, tgt = zip(*samples[i:i + args.batch_size])
+            users, hist, tgt, rating = zip(*samples[i:i + args.batch_size])
             logits = model.score(model.encode(enc(users, hist)))
-            loss = F.cross_entropy(logits, torch.tensor(tgt, device=device))
+            loss = F.cross_entropy(logits, torch.tensor(tgt, device=device), reduction="none")
+            if args.rating_weight:  # paper's reward weighting: weight by rating, mean 1 per batch
+                w = torch.tensor(rating, device=device, dtype=torch.float)
+                loss = loss * w / w.mean()
+            loss = loss.mean()
             opt.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(params, args.clip)
@@ -125,9 +132,12 @@ def train(args):
         m = evaluate(score_fn(model, enc), d, "valid", batch_size=args.eval_batch_size)
         print(f"epoch {epoch}  loss={total / step:.4f}  valid {fmt(m)}")
         log_history(run, global_step, **{f"valid_{k}": v for k, v in m.items()})
+        trainable = {k for k, p in model.named_parameters() if p.requires_grad}
+        state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items() if k in trainable}
+        torch.save(state, run / "last.pt")  # trainable params only: LoRA + norm + item embeddings
         if m["NDCG@10"] > best:
-            trainable = {k for k, p in model.named_parameters() if p.requires_grad}
-            best, best_state = m["NDCG@10"], {k: v.clone() for k, v in model.state_dict().items() if k in trainable}
+            best, best_state = m["NDCG@10"], state
+            torch.save(state, run / "best.pt")
 
     minutes = (time.time() - t0) / 60
     model.load_state_dict(best_state, strict=False)
@@ -155,5 +165,7 @@ if __name__ == "__main__":
     p.add_argument("--log_every", type=int, default=50)
     p.add_argument("--warmup", type=float, default=0.05, help="fraction of steps")
     p.add_argument("--clip", type=float, default=1.0, help="grad norm clip")
+    p.add_argument("--rating_weight", action="store_true", help="weight loss by target rating")
+    p.add_argument("--resume", help="checkpoint (.pt) to start from, e.g. runs/<run>/best.pt")
     p.add_argument("--seed", type=int, default=42)
     train(p.parse_args())
