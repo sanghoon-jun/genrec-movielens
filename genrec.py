@@ -12,15 +12,21 @@ import torch.nn.functional as F
 from peft import LoraConfig, get_peft_model
 from transformers import AutoModel, AutoTokenizer
 
-from common import evaluate, fmt, load, log_history, machine, pick_device, save_metrics, start_run
+from common import add_synopses, evaluate, fmt, load, log_history, machine, pick_device, save_metrics, start_run
+
+
+SYNOPSIS_LAST = 5  # v5: synopsis only for the most recent movies (token budget)
 
 
 def verbalize(d, items, ratings, n, prompt="v2"):
-    # v2: title + rating; v3: + genres
-    def movie(i, r):
-        genres = f" [{d.movies.genres[i]}]" if prompt == "v3" else ""
-        return f"{d.movies.title[i]}{genres} {r}"
-    movies = "; ".join(movie(i, r) for i, r in zip(items[-n:], ratings[-n:]))
+    # v2: title + rating; v3: + genres; v5: v3 + first-sentence synopsis for the last 5 movies
+    items, ratings = items[-n:], ratings[-n:]
+
+    def movie(k, i, r):
+        genres = f" [{d.movies.genres[i]}]" if prompt in ("v3", "v5") else ""
+        syn = d.movies.synopsis[i] if prompt == "v5" and k >= len(items) - SYNOPSIS_LAST else ""
+        return f"{d.movies.title[i]}{genres} {r}" + (f" ({syn})" if syn else "")
+    movies = "; ".join(movie(k, i, r) for k, (i, r) in enumerate(zip(items, ratings)))
     return f"Watched (rating 1-5): {movies}\nNext:"
 
 
@@ -78,6 +84,8 @@ def train(args):
     device = pick_device(args.device)
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
     d = load()
+    if args.prompt == "v5":
+        add_synopses(d)
     if args.users:
         d.seqs, d.ratings = d.seqs[:args.users], d.ratings[:args.users]
 
@@ -153,7 +161,8 @@ if __name__ == "__main__":
     p.add_argument("--device", choices=["cpu", "mps", "cuda"])
     p.add_argument("--users", type=int, help="subset for quick debugging")
     p.add_argument("--history", type=int, default=20, help="movies in prompt")
-    p.add_argument("--prompt", choices=["v2", "v3"], default="v2", help="v2: title+rating, v3: +genres")
+    p.add_argument("--prompt", choices=["v2", "v3", "v5"], default="v2",
+                   help="v2: title+rating, v3: +genres, v5: v3 + synopsis for last 5 movies")
     p.add_argument("--samples_per_user", type=int, default=16)
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--batch_size", type=int, default=8)

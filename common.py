@@ -67,9 +67,28 @@ def load(min_len=5):
         n_items=len(movie_ids),
         seqs=groups.item.apply(list).tolist(),
         ratings=groups.rating.apply(list).tolist(),
-        movies=movies[["title", "genres"]],
+        movies=movies[["movie", "title", "genres"]],
     )
 
+
+SYNOPSIS = ROOT / "the-movies-dataset"
+SYNOPSIS_HELP = ("synopses missing: needs a Kaggle token in ~/.kaggle/kaggle.json, then\n"
+                 "  uvx kaggle datasets download rounakbanik/the-movies-dataset -f movies_metadata.csv -p data/the-movies-dataset --unzip\n"
+                 "  uvx kaggle datasets download rounakbanik/the-movies-dataset -f links.csv -p data/the-movies-dataset --unzip")
+
+
+def add_synopses(d):
+    """d.movies.synopsis = first sentence of the TMDb overview (MovieLens id -> TMDb id via links.csv)."""
+    if not (SYNOPSIS / "links.csv").exists() or not (SYNOPSIS / "movies_metadata.csv").exists():
+        raise FileNotFoundError(SYNOPSIS_HELP)
+    links = pd.read_csv(SYNOPSIS / "links.csv").dropna(subset=["tmdbId"])
+    meta = pd.read_csv(SYNOPSIS / "movies_metadata.csv", usecols=["id", "overview"], low_memory=False)
+    meta = meta[pd.to_numeric(meta.id, errors="coerce").notna()].astype({"id": int}).drop_duplicates("id")
+    overview = links.astype({"tmdbId": int}).merge(meta, left_on="tmdbId", right_on="id").set_index("movieId").overview
+    first = overview.fillna("").str.split(r"(?<=[.!?])\s", n=1, regex=True).str[0].str.slice(0, 200)
+    d.movies["synopsis"] = d.movies.movie.map(first).fillna("")
+    print(f"synopses: {(d.movies.synopsis != '').mean():.1%} of {len(d.movies)} movies")
+    return d
 
 
 @torch.no_grad()

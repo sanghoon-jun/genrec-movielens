@@ -1,6 +1,6 @@
 """runs/ -> docs/figures/{curves,scaling}.png
 
-Uses the best full-data run (no --users, by test NDCG@10) per model unless --runs is given.
+Uses the best main run (full data, seed 42, no ablation flags) per model unless --runs is given.
 """
 import argparse
 import csv
@@ -51,7 +51,9 @@ def full_runs():
     best = {}
     for p in sorted(RUNS.glob("*_*")):
         info, _ = read_run(p)
-        if info and not info["args"].get("users"):
+        a = info["args"] if info else {}
+        # main runs only: full data, default seed, no ablation flags (no cherry-picking seeds)
+        if info and not a.get("users") and a.get("seed", 42) == 42 and not a.get("rating_weight"):
             key, score = label(p, info), info["metrics"]["NDCG@10"]
             if key not in best or score > best[key][1]:
                 best[key] = (p, score)
