@@ -18,16 +18,17 @@ from common import add_synopses, evaluate, fmt, load, log_history, machine, pick
 SYNOPSIS_LAST = 5  # v5: synopsis only for the most recent movies (token budget)
 
 
-def verbalize(d, items, ratings, n, prompt="v2"):
-    # v2: title + rating; v3: + genres; v5: v3 + first-sentence synopsis for the last 5 movies
+def verbalize(d, items, ratings, n, prompt="v2", user=None):
+    # v2: title + rating; v3: + genres; v4: v3 + user profile; v5: v3 + first-sentence synopsis for the last 5 movies
     items, ratings = items[-n:], ratings[-n:]
 
     def movie(k, i, r):
-        genres = f" [{d.movies.genres[i]}]" if prompt in ("v3", "v5") else ""
+        genres = f" [{d.movies.genres[i]}]" if prompt in ("v3", "v4", "v5") else ""
         syn = d.movies.synopsis[i] if prompt == "v5" and k >= len(items) - SYNOPSIS_LAST else ""
         return f"{d.movies.title[i]}{genres} {r}" + (f" ({syn})" if syn else "")
     movies = "; ".join(movie(k, i, r) for k, (i, r) in enumerate(zip(items, ratings)))
-    return f"Watched (rating 1-5): {movies}\nNext:"
+    user_line = f"User: {d.profiles[user]}\n" if prompt == "v4" else ""
+    return f"{user_line}Watched (rating 1-5): {movies}\nNext:"
 
 
 class GenRec(nn.Module):
@@ -56,7 +57,7 @@ class Encoder:
         self.d, self.tok, self.n, self.device, self.prompt = d, tok, n, device, prompt
 
     def __call__(self, users, hist):
-        texts = [verbalize(self.d, h, self.d.ratings[u], self.n, self.prompt) for u, h in zip(users, hist)]
+        texts = [verbalize(self.d, h, self.d.ratings[u], self.n, self.prompt, u) for u, h in zip(users, hist)]
         return self.tok(texts, return_tensors="pt", padding=True).to(self.device)
 
 
@@ -96,7 +97,7 @@ def train(args):
     if args.resume:  # continue from a saved checkpoint (LoRA + head); a fresh LR schedule starts
         missing = model.load_state_dict(torch.load(args.resume, map_location=device), strict=False)
         print(f"resumed from {args.resume} ({len(missing.unexpected_keys)} unexpected keys)")
-    print("example prompt:\n" + verbalize(d, d.seqs[0][:-2], d.ratings[0], args.history, args.prompt))
+    print("example prompt:\n" + verbalize(d, d.seqs[0][:-2], d.ratings[0], args.history, args.prompt, 0))
 
     opt = torch.optim.AdamW([
         {"params": [p for p in model.llm.parameters() if p.requires_grad], "lr": args.lr},
@@ -161,8 +162,8 @@ if __name__ == "__main__":
     p.add_argument("--device", choices=["cpu", "mps", "cuda"])
     p.add_argument("--users", type=int, help="subset for quick debugging")
     p.add_argument("--history", type=int, default=20, help="movies in prompt")
-    p.add_argument("--prompt", choices=["v2", "v3", "v5"], default="v2",
-                   help="v2: title+rating, v3: +genres, v5: v3 + synopsis for last 5 movies")
+    p.add_argument("--prompt", choices=["v2", "v3", "v4", "v5"], default="v2",
+                   help="v2: title+rating, v3: +genres, v4: v3 + user profile, v5: v3 + synopsis for last 5 movies")
     p.add_argument("--samples_per_user", type=int, default=16)
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--batch_size", type=int, default=8)

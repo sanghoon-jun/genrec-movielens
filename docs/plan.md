@@ -15,6 +15,7 @@ history → text prompt → LLM → h (last token) → score_i = h · e_i → so
   ```
   v2: Watched (rating 1-5): Toy Story (1995) 5; Heat (1995) 3; ...\nNext:          (~270 tokens)
   v3: Watched (rating 1-5): Toy Story (1995) [Animation|Children's|Comedy] 5; ...  (~420 tokens)
+  v4: "User: male, age 25-34, programmer\n" + v3  (~435 tokens)
   v5: v3 + first synopsis sentence (TMDb, via Kaggle "The Movies Dataset") for the last 5 movies  (~550 tokens)
   ```
 
@@ -75,7 +76,7 @@ Run: `uv run python {common,sasrec,genrec}.py`
 | 2 | Baselines: Popularity, SASRec | ✅ SASRec NDCG@10 0.168 |
 | 3 | Pipeline on small subset (CPU/MPS) | ✅ |
 | 4 | First GPU run: 0.5B + LoRA | ✅ beats Popularity |
-| 5 | Ablations | 🔄 prompt v2→v3 ✅ (+4%); rating weights ✅ (no gain); history length ⬜ |
+| 5 | Ablations | 🔄 prompt v2→v3 ✅ (+4%); rating weights ✅ (no gain); v4/v5 ✅ at 0.5B (within noise); history length ⬜ |
 | 6 | Scaling: 0.5B → 1.5B → 3B → 7B | 🔄 0.5B, 1.5B ✅ (+7%); 1.5B v3 ✅ (0.1546); 7B ✅ (0.1569, 2 ep); 3B queued |
 | 7 | Data scaling on ML-25M (separate benchmark) | ⬜ after current queue |
 | 8 | README: results + reproduce | ⬜ |
@@ -93,23 +94,38 @@ Machines: **RunPod** = RTX 4090 Secure ($0.74/h) or A100 80GB (~$1.4–1.6/h) ·
 | 6 | 0.5B v2, 3 ep, lr 1e-4 | ✅ | RunPod 4090 | 74 min | $1.00 | 0.1386 |
 | 7 | 0.5B v3, 3 ep, lr 2e-4 | ✅ | RunPod 4090 | 78 min | $1.30 | 0.1500 |
 | 8 | 1.5B v3, 3 ep, lr 1e-4 | ✅ | RunPod 4090 | 3.4 h | $2.50 (+$0.85 failed pod) | 0.1546 |
-| 9 | 7B v3, 2 ep, lr 5e-5 | ✅ best | RunPod A100 80GB | 6.1 h | $9.60 (+$0.65 crashed start) | **0.1569** |
+| 9 | 7B v3, 2 ep, lr 5e-5 | ✅ | RunPod A100 80GB | 6.1 h | $9.60 (+$0.65 crashed start) | 0.1569 |
 | 10 | 0.5B v3, seed 43 (noise check) | ✅ | WSL | 3.4 h | $0 | 0.1558 |
-| 11 | 0.5B v3, history 50 (`--grad_ckpt`) | ⏳ queued (4th) | WSL | ~10–12 h | $0 | – |
-| 12 | 0.5B v3, rating-weighted loss | ✅ no gain | WSL | 4.0 h | $0 | 0.1473 |
-| 13 | 1.5B v3, 5 ep | 🔄 running | WSL | ~14 h | $0 | – |
-| 14 | 0.5B v5 (v3 + synopsis, last 5 movies), 3 ep | ⏳ queued (5th) | WSL | ~5 h | $0 | – |
-| 15 | 3B v3, 3 ep (`--grad_ckpt`) | ⏳ queued (6th) | WSL | ~17 h | $0 | – |
+| 11 | 0.5B v3, rating-weighted loss | ✅ no gain | WSL | 4.0 h | $0 | 0.1473 |
+| 12 | 1.5B v3, 5 ep | ✅ best | WSL | 19 h | $0 | **0.1627** |
+| 13 | 0.5B v5 | ✅ | WSL | 5.6 h | $0 | 0.1520 |
+| 14 | 0.5B v4 | ✅ | WSL | 4.0 h | $0 | 0.1530 |
+| 15 | 1.5B v4 (`--grad_ckpt`) | ✅ | WSL | 11.8 h | $0 | 0.1581 |
+| 16 | 1.5B v5 (`--grad_ckpt`) | 🔄 running | WSL | ~17 h | $0 | – |
+| 17 | 1.5B v4, 8 ep (epoch-count study for final) | ⏳ queued | WSL | ~31 h | $0 | – |
+| 18 | 3B v4 (`--grad_ckpt`) | ⏳ queued | WSL | ~17–22 h | $0 | – |
+| 19 | 0.5B v3, history 50 (`--grad_ckpt`) | ⏳ queued | WSL | ~11 h | $0 | – |
+| 20 | **Final: 7B v4, epochs from #17 (3–5), lr 5e-5** | ⬜ after #17 | RunPod A100 80GB | ~9–16 h | ~$15–26 | – |
+
+### Prompt × size grid (test NDCG@10)
+Settings fixed per size (0.5B: lr 2e-4, 5% warmup; 1.5B/3B: lr 1e-4, 10% warmup; 7B: lr 5e-5). 7B is reserved for the final model.
+
+| Size \ prompt | v2 | v3 | v4 | v5 |
+|---|---|---|---|---|
+| 0.5B | 0.1441 (#4) | 0.1500 (#7), seed 43: 0.1558 (#10) | 0.1530 (#14) | 0.1520 (#13) |
+| 1.5B | 0.1486 (#5) | 0.1546 (#8), 5 ep: 0.1627 (#12) | 0.1581 (#15) | #16 |
+| 3B | – | – | #18 | – |
+| 7B | – | 0.1569 (#9, 2 ep) | final #20 | – |
 
 ### Planned: ML-25M data scaling (step 7)
 Fixed model (0.5B v3), vary #users sampled from ML-25M; SASRec at each size. Eval on a fixed random 10k-user subset; full catalog (~59k movies). Not comparable to ML-1M numbers.
 
 | # | Run | Status | Machine | Time | Cost | Test NDCG@10 |
 |---|---|---|---|---|---|---|
-| 16 | Code: ML-25M loader, `--dataset`, user subsample, eval subset | ⬜ | – | – | – | – |
-| 17 | SASRec, 10k / 40k / 160k users | ⬜ | WSL | ~1–3 h total | $0 | – |
-| 18 | GenRec 0.5B v3, 10k users | ⬜ | WSL | ~5 h (3 ep) | $0 | – |
-| 19 | GenRec 0.5B v3, 40k users | ⬜ | WSL | ~21 h (3 ep) | $0 | – |
-| 20 | GenRec 0.5B v3, 160k users (optional) | ⬜ | WSL / RunPod | ~28 h/epoch WSL | $0 / ~$8/epoch | – |
+| 21 | Code: ML-25M loader, `--dataset`, user subsample, eval subset | ⬜ | – | – | – | – |
+| 22 | SASRec, 10k / 40k / 160k users | ⬜ | WSL | ~1–3 h total | $0 | – |
+| 23 | GenRec 0.5B v3, 10k users | ⬜ | WSL | ~5 h (3 ep) | $0 | – |
+| 24 | GenRec 0.5B v3, 40k users | ⬜ | WSL | ~21 h (3 ep) | $0 | – |
+| 25 | GenRec 0.5B v3, 160k users (optional) | ⬜ | WSL / RunPod | ~28 h/epoch WSL | $0 / ~$8/epoch | – |
 
 Results → [results.md](results.md)

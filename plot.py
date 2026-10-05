@@ -42,27 +42,48 @@ def label(path, info):
     model = path.name.split("_")[0]
     if model == "genrec" and info:
         prompt = info["args"].get("prompt", "v2")
-        return f"GenRec {info['args']['backbone'].split('/')[-1]}" + ("" if prompt == "v2" else f" {prompt}")
+        ep = info["args"].get("epochs", 1)
+        return f"GenRec {info['args']['backbone'].split('/')[-1]}" + ("" if prompt == "v2" else f" {prompt}") + f" ({ep} ep)"
     return {"sasrec": "SASRec"}.get(model, model)
 
 
-def full_runs():
-    """Best finished full-data run per (model, backbone), by test NDCG@10."""
-    best = {}
+def main_runs():
+    """Main runs only: full data, default seed, no ablation flags (no cherry-picking seeds)."""
     for p in sorted(RUNS.glob("*_*")):
         info, _ = read_run(p)
         a = info["args"] if info else {}
-        # main runs only: full data, default seed, no ablation flags (no cherry-picking seeds)
-        if info and not a.get("users") and a.get("seed", 42) == 42 and not a.get("rating_weight"):
-            key, score = label(p, info), info["metrics"]["NDCG@10"]
-            if key not in best or score > best[key][1]:
-                best[key] = (p, score)
+        if info and not a.get("users") and a.get("seed", 42) == 42 and not a.get("rating_weight") \
+                and a.get("history", 20) == 20:
+            yield p, info
+
+
+def full_runs():
+    """Best main run per (model, backbone, prompt), by test NDCG@10."""
+    best = {}
+    for p, info in main_runs():
+        key, score = label(p, info), info["metrics"]["NDCG@10"]
+        if key not in best or score > best[key][1]:
+            best[key] = (p, score)
     return [p for p, _ in best.values()]
+
+
+SCALING_EPOCHS = 3  # scaling plot compares sizes at the same training length
+
+
+def best_per_size(runs):
+    """Curves stay readable: best run per backbone (any prompt/epochs) + SASRec, at most len(SERIES) lines."""
+    best = {}
+    for p in runs:
+        info, _ = read_run(p)
+        key = info["args"].get("backbone", "sasrec")
+        if key not in best or info["metrics"]["NDCG@10"] > best[key][1]:
+            best[key] = (p, info["metrics"]["NDCG@10"])
+    return [p for p, _ in sorted(best.values(), key=lambda x: -x[1])][:len(SERIES)]
 
 
 def plot_curves(runs):
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 4))
-    for color, p in zip(SERIES, runs):
+    for color, p in zip(SERIES, best_per_size(runs)):
         info, hist = read_run(p)
         name = label(p, info)
         for ax, key in ((a1, "loss"), (a2, "valid_NDCG@10")):
@@ -83,15 +104,22 @@ def plot_curves(runs):
 
 
 def plot_scaling(runs):
-    points, sasrec = {}, None  # prompt -> [(size, ndcg)]
+    # per (prompt, size): prefer a SCALING_EPOCHS run; otherwise the closest, annotated with its epochs
+    cells, sasrec = {}, None
+    for p, info in main_runs():
+        a = info["args"]
+        size = re.search(r"(\d+(?:\.\d+)?)B", a.get("backbone", "")) if p.name.startswith("genrec") else None
+        if size:
+            key, ep, ndcg = (a.get("prompt", "v2"), float(size.group(1))), a.get("epochs", 1), info["metrics"]["NDCG@10"]
+            rank = (-abs(ep - SCALING_EPOCHS), ndcg)  # closest to SCALING_EPOCHS, then best score
+            if key not in cells or rank > (-abs(cells[key][0] - SCALING_EPOCHS), cells[key][1]):
+                cells[key] = (ep, ndcg)
     for p in runs:
-        info, _ = read_run(p)
-        if p.name.startswith("genrec"):
-            size = re.search(r"(\d+(?:\.\d+)?)B", info["args"]["backbone"])
-            if size:
-                points.setdefault(info["args"].get("prompt", "v2"), []).append((float(size.group(1)), info["metrics"]["NDCG@10"]))
-        elif p.name.startswith("sasrec"):
-            sasrec = info["metrics"]["NDCG@10"]
+        if p.name.startswith("sasrec"):
+            sasrec = read_run(p)[0]["metrics"]["NDCG@10"]
+    points = {}  # prompt -> [(size, ndcg, epochs)]
+    for (prompt, size), (ep, ndcg) in cells.items():
+        points.setdefault(prompt, []).append((size, ndcg, ep))
     if not points:
         print("no GenRec full runs yet: skip scaling.png")
         return
@@ -99,13 +127,14 @@ def plot_scaling(runs):
     pop = evaluate(popularity(d), d)["NDCG@10"]
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    sizes = sorted({x for pts in points.values() for x, _ in pts})
+    sizes = sorted({x for pts in points.values() for x, _, _ in pts})
     for i, (color, (prompt, pts)) in enumerate(zip(SERIES, sorted(points.items()))):
-        xs, ys = zip(*sorted(pts))
+        xs, ys, eps = zip(*sorted(pts))
         ax.plot(xs, ys, "-o", color=color, markeredgecolor=SURFACE, markeredgewidth=2, label=f"GenRec ({prompt} prompt)")
         offset, ha = ((0, -14), "center") if i == 0 else ((8, 4), "left")  # keep same-size labels apart
-        for x, y in zip(xs, ys):
-            ax.annotate(f"{y:.3f}", (x, y), xytext=offset, textcoords="offset points", ha=ha, fontsize=9, color=INK2)
+        for x, y, ep in zip(xs, ys, eps):
+            note = "" if ep == SCALING_EPOCHS else f" ({ep} ep)"
+            ax.annotate(f"{y:.3f}{note}", (x, y), xytext=offset, textcoords="offset points", ha=ha, fontsize=9, color=INK2)
     for y, name, style in ((sasrec, "SASRec", "--"), (pop, "Popularity", ":")):
         if y is not None:
             ax.axhline(y, color=INK2, linestyle=style, linewidth=1.2, label=name)
@@ -114,7 +143,7 @@ def plot_scaling(runs):
     ax.set_xscale("log")
     ax.set_xticks(sizes, [f"{x:g}B" for x in sizes])
     ax.minorticks_off()
-    ax.set(title="Test NDCG@10 vs backbone size", xlabel="backbone parameters", ylabel="NDCG@10", ylim=(0, None))
+    ax.set(title=f"Test NDCG@10 vs backbone size ({SCALING_EPOCHS} epochs)", xlabel="backbone parameters", ylabel="NDCG@10", ylim=(0, None))
     ax.title.set_color(INK)
     ax.legend(loc="center left", fontsize=9)
     fig.tight_layout()

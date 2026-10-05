@@ -29,7 +29,8 @@ class Data:
     n_items: int             # item ids are 1..n_items, 0 = padding
     seqs: list[list[int]]    # per user, item ids sorted by time
     ratings: list[list[int]] # per user, aligned with seqs
-    movies: pd.DataFrame     # index = item id, columns: title, genres
+    movies: pd.DataFrame     # index = item id, columns: movie, title, genres
+    profiles: list[str]      # per user, aligned with seqs: "gender, age, occupation"
 
     def split(self, name):
         """Returns (histories, targets). train: history only, no target."""
@@ -55,6 +56,7 @@ def load(min_len=5):
     read = lambda f, cols: pd.read_csv(path / f, sep="::", engine="python", names=cols, encoding="latin-1")
     ratings = read("ratings.dat", ["user", "movie", "rating", "ts"])
     movies = read("movies.dat", ["movie", "title", "genres"])
+    users = read("users.dat", ["user", "gender", "age", "occupation", "zip"]).set_index("user")  # zip unused
 
     ratings = ratings[ratings.groupby("user").movie.transform("size") >= min_len]
     movie_ids = sorted(ratings.movie.unique())
@@ -68,7 +70,19 @@ def load(min_len=5):
         seqs=groups.item.apply(list).tolist(),
         ratings=groups.rating.apply(list).tolist(),
         movies=movies[["movie", "title", "genres"]],
+        profiles=[profile(users.loc[u]) for u in groups.groups],
     )
+
+
+AGES = {1: "under 18", 18: "18-24", 25: "25-34", 35: "35-44", 45: "45-49", 50: "50-55", 56: "56+"}
+JOBS = ["other", "academic/educator", "artist", "clerical/admin", "college/grad student", "customer service",
+        "doctor/health care", "executive/managerial", "farmer", "homemaker", "K-12 student", "lawyer",
+        "programmer", "retired", "sales/marketing", "scientist", "self-employed", "technician/engineer",
+        "tradesman/craftsman", "unemployed", "writer"]
+
+
+def profile(u):
+    return f"{'male' if u.gender == 'M' else 'female'}, age {AGES[u.age]}, {JOBS[u.occupation]}"
 
 
 SYNOPSIS = ROOT / "the-movies-dataset"
