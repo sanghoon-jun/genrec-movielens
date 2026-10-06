@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from peft import LoraConfig, get_peft_model
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 from common import add_synopses, evaluate, fmt, load, log_history, machine, pick_device, save_metrics, start_run
 
@@ -32,9 +32,10 @@ def verbalize(d, items, ratings, n, prompt="v2", user=None):
 
 
 class GenRec(nn.Module):
-    def __init__(self, n_items, backbone, lora_r=16, dtype=torch.float32, grad_ckpt=False):
+    def __init__(self, n_items, backbone, lora_r=16, dtype=torch.float32, grad_ckpt=False, lm=False):
         super().__init__()
-        llm = AutoModel.from_pretrained(backbone, dtype=dtype)
+        # lm=True keeps the LM head for the paper's language loss; the ranking path is identical either way
+        llm = (AutoModelForCausalLM if lm else AutoModel).from_pretrained(backbone, dtype=dtype)
         lora = LoraConfig(r=lora_r, lora_alpha=2 * lora_r, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"])
         if grad_ckpt:  # recompute activations in backward: ~30% slower, ~GBs less memory
             llm.gradient_checkpointing_enable()
@@ -44,8 +45,25 @@ class GenRec(nn.Module):
         self.item = nn.Embedding(n_items + 1, llm.config.hidden_size)  # scoring head E
         nn.init.normal_(self.item.weight, std=0.02)
 
+    def hidden(self, tokens):  # transformer body (with LoRA) -> (B, L, d)
+        base = self.llm.get_base_model()
+        return getattr(base, "model", base)(**tokens).last_hidden_state
+
     def encode(self, tokens):  # left-padded -> (B, d), last token
-        return self.norm(self.llm(**tokens).last_hidden_state[:, -1].float())
+        return self.norm(self.hidden(tokens)[:, -1].float())
+
+    def encode_lm(self, tokens, title_len):
+        """Prompt + target title in one pass: h at the last prompt token (before the title),
+        LM loss on the title tokens."""
+        H = self.hidden(tokens)
+        L = H.size(1)
+        rows = torch.arange(H.size(0), device=H.device)
+        h = self.norm(H[rows, L - title_len - 1].float())
+        b, pos = zip(*[(i, L - n - 1 + k) for i, n in enumerate(title_len.tolist()) for k in range(n)])
+        b, pos = torch.tensor(b, device=H.device), torch.tensor(pos, device=H.device)
+        logits = self.llm.get_base_model().lm_head(H[b, pos]).float()  # position pos predicts token pos+1
+        lm_loss = F.cross_entropy(logits, tokens["input_ids"][b, pos + 1])
+        return h, lm_loss
 
     def score(self, h):
         return h @ self.item.weight.T
@@ -59,6 +77,18 @@ class Encoder:
     def __call__(self, users, hist):
         texts = [verbalize(self.d, h, self.d.ratings[u], self.n, self.prompt, u) for u, h in zip(users, hist)]
         return self.tok(texts, return_tensors="pt", padding=True).to(self.device)
+
+    def with_titles(self, users, hist, tgt):
+        """Prompt followed by the target title (training only); left-padded. Returns tokens, title lengths."""
+        texts = [verbalize(self.d, h, self.d.ratings[u], self.n, self.prompt, u) for u, h in zip(users, hist)]
+        prompts = self.tok(texts)["input_ids"]
+        titles = self.tok([" " + self.d.movies.title[t] for t in tgt], add_special_tokens=False)["input_ids"]
+        seqs = [p + t for p, t in zip(prompts, titles)]
+        L, pad = max(map(len, seqs)), self.tok.pad_token_id
+        ids = torch.tensor([[pad] * (L - len(x)) + x for x in seqs])
+        mask = torch.tensor([[0] * (L - len(x)) + [1] * len(x) for x in seqs])
+        tokens = {"input_ids": ids.to(self.device), "attention_mask": mask.to(self.device)}
+        return tokens, torch.tensor([len(t) for t in titles], device=self.device)
 
 
 def score_fn(model, enc):
@@ -92,7 +122,7 @@ def train(args):
 
     tok = AutoTokenizer.from_pretrained(args.backbone, padding_side="left")
     enc = Encoder(d, tok, args.history, device, args.prompt)
-    model = GenRec(d.n_items, args.backbone, args.lora_r, dtype, args.grad_ckpt).to(device)
+    model = GenRec(d.n_items, args.backbone, args.lora_r, dtype, args.grad_ckpt, lm=args.lm_weight > 0).to(device)
     model.llm.print_trainable_parameters()
     if args.resume:  # continue from a saved checkpoint (LoRA + head); a fresh LR schedule starts
         missing = model.load_state_dict(torch.load(args.resume, map_location=device), strict=False)
@@ -119,12 +149,16 @@ def train(args):
         total = window = 0.0
         for step, i in enumerate(range(0, len(samples), args.batch_size), 1):
             users, hist, tgt, rating = zip(*samples[i:i + args.batch_size])
-            logits = model.score(model.encode(enc(users, hist)))
+            if args.lm_weight > 0:  # paper: L = α·L_rank + β·L_language, α + β = 1
+                h, lm_loss = model.encode_lm(*enc.with_titles(users, hist, tgt))
+            else:
+                h, lm_loss = model.encode(enc(users, hist)), 0.0
+            logits = model.score(h)
             loss = F.cross_entropy(logits, torch.tensor(tgt, device=device), reduction="none")
             if args.rating_weight:  # paper's reward weighting: weight by rating, mean 1 per batch
                 w = torch.tensor(rating, device=device, dtype=torch.float)
                 loss = loss * w / w.mean()
-            loss = loss.mean()
+            loss = (1 - args.lm_weight) * loss.mean() + args.lm_weight * lm_loss
             opt.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(params, args.clip)
@@ -176,6 +210,7 @@ if __name__ == "__main__":
     p.add_argument("--warmup", type=float, default=0.05, help="fraction of steps")
     p.add_argument("--clip", type=float, default=1.0, help="grad norm clip")
     p.add_argument("--rating_weight", action="store_true", help="weight loss by target rating")
+    p.add_argument("--lm_weight", type=float, default=0.0, help="β for the paper's language loss on the target title")
     p.add_argument("--resume", help="checkpoint (.pt) to start from, e.g. runs/<run>/best.pt")
     p.add_argument("--seed", type=int, default=42)
     train(p.parse_args())

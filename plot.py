@@ -14,7 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker
 
-from common import RUNS, evaluate, load, popularity
+from common import RUNS
 
 OUT = Path(__file__).parent / "docs" / "figures"
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]  # validated categorical order
@@ -57,11 +57,17 @@ def main_runs():
             yield p, info
 
 
+def valid_score(p, info):
+    """Selection uses validation only (max valid NDCG@10); test is never used to choose."""
+    _, hist = read_run(p)
+    return max((v for _, v in hist.get("valid_NDCG@10", [])), default=info["metrics"]["NDCG@10"])
+
+
 def full_runs():
-    """Best main run per (model, backbone, prompt), by test NDCG@10."""
+    """Best main run per (model, backbone, prompt, epochs), by valid NDCG@10."""
     best = {}
     for p, info in main_runs():
-        key, score = label(p, info), info["metrics"]["NDCG@10"]
+        key, score = label(p, info), valid_score(p, info)
         if key not in best or score > best[key][1]:
             best[key] = (p, score)
     return [p for p, _ in best.values()]
@@ -76,8 +82,8 @@ def best_per_size(runs):
     for p in runs:
         info, _ = read_run(p)
         key = info["args"].get("backbone", "sasrec")
-        if key not in best or info["metrics"]["NDCG@10"] > best[key][1]:
-            best[key] = (p, info["metrics"]["NDCG@10"])
+        if key not in best or valid_score(p, info) > best[key][1]:
+            best[key] = (p, valid_score(p, info))
     return [p for p, _ in sorted(best.values(), key=lambda x: -x[1])][:len(SERIES)]
 
 
@@ -110,32 +116,29 @@ def plot_scaling(runs):
         a = info["args"]
         size = re.search(r"(\d+(?:\.\d+)?)B", a.get("backbone", "")) if p.name.startswith("genrec") else None
         if size:
-            key, ep, ndcg = (a.get("prompt", "v2"), float(size.group(1))), a.get("epochs", 1), info["metrics"]["NDCG@10"]
-            rank = (-abs(ep - SCALING_EPOCHS), ndcg)  # closest to SCALING_EPOCHS, then best score
-            if key not in cells or rank > (-abs(cells[key][0] - SCALING_EPOCHS), cells[key][1]):
-                cells[key] = (ep, ndcg)
+            key, ep = (a.get("prompt", "v2"), float(size.group(1))), a.get("epochs", 1)
+            rank = (-abs(ep - SCALING_EPOCHS), valid_score(p, info))  # closest to SCALING_EPOCHS, then best valid
+            if key not in cells or rank > cells[key][0]:
+                cells[key] = (rank, ep, info["metrics"]["NDCG@10"])
     for p in runs:
         if p.name.startswith("sasrec"):
             sasrec = read_run(p)[0]["metrics"]["NDCG@10"]
     points = {}  # prompt -> [(size, ndcg, epochs)]
-    for (prompt, size), (ep, ndcg) in cells.items():
+    for (prompt, size), (_, ep, ndcg) in cells.items():
         points.setdefault(prompt, []).append((size, ndcg, ep))
     if not points:
         print("no GenRec full runs yet: skip scaling.png")
         return
-    d = load()
-    pop = evaluate(popularity(d), d)["NDCG@10"]
 
     fig, ax = plt.subplots(figsize=(6, 4))
     sizes = sorted({x for pts in points.values() for x, _, _ in pts})
     for i, (color, (prompt, pts)) in enumerate(zip(SERIES, sorted(points.items()))):
         xs, ys, eps = zip(*sorted(pts))
         ax.plot(xs, ys, "-o", color=color, markeredgecolor=SURFACE, markeredgewidth=2, label=f"GenRec ({prompt} prompt)")
-        offset, ha = ((0, -14), "center") if i == 0 else ((8, 4), "left")  # keep same-size labels apart
-        for x, y, ep in zip(xs, ys, eps):
-            note = "" if ep == SCALING_EPOCHS else f" ({ep} ep)"
-            ax.annotate(f"{y:.3f}{note}", (x, y), xytext=offset, textcoords="offset points", ha=ha, fontsize=9, color=INK2)
-    for y, name, style in ((sasrec, "SASRec", "--"), (pop, "Popularity", ":")):
+        for x, y, ep in zip(xs, ys, eps):  # exact values live in results.md; only flag off-schedule points
+            if ep != SCALING_EPOCHS:
+                ax.annotate(f"{ep} ep", (x, y), xytext=(8, 0), textcoords="offset points", va="center", fontsize=9, color=INK2)
+    for y, name, style in ((sasrec, "SASRec", "--"),):  # Popularity (~0.02) is far below the zoomed axis
         if y is not None:
             ax.axhline(y, color=INK2, linestyle=style, linewidth=1.2, label=name)
             ax.annotate(name, (1, y), xycoords=("axes fraction", "data"), xytext=(-4, 4),
@@ -143,9 +146,9 @@ def plot_scaling(runs):
     ax.set_xscale("log")
     ax.set_xticks(sizes, [f"{x:g}B" for x in sizes])
     ax.minorticks_off()
-    ax.set(title=f"Test NDCG@10 vs backbone size ({SCALING_EPOCHS} epochs)", xlabel="backbone parameters", ylabel="NDCG@10", ylim=(0, None))
+    ax.set(title=f"Test NDCG@10 vs backbone size ({SCALING_EPOCHS} epochs)", xlabel="backbone parameters", ylabel="NDCG@10", ylim=(0.13, None))
     ax.title.set_color(INK)
-    ax.legend(loc="center left", fontsize=9)
+    ax.legend(loc="lower right", fontsize=9)
     fig.tight_layout()
     fig.savefig(OUT / "scaling.png", dpi=150)
     print(f"wrote {OUT / 'scaling.png'}")
