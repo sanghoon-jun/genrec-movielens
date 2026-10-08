@@ -8,24 +8,29 @@ Reproduce GenRec as described in the paper on public data (MovieLens-1M) and che
 | Component | Status |
 |---|---|
 | Verbalized history → LLM → pooled `h` → `h·e_i`, CE over full catalog | ✅ faithful |
-| Context engineering (prompt versions) | ✅ faithful |
-| Reward weighting (here: rating) | ✅ faithful, tested |
-| LM loss `β·L_language` on the target title | ✅ faithful; neutral-to-positive (+2.9% at 0.5B), used in final |
+| Context engineering (prompt versions, history length) | ✅ faithful |
+| LM loss `β·L_language` on the target title | ✅ faithful (+2.9% at 0.5B, within noise; kept) |
+| Reward weighting (here: rating) | ✅ faithful, tested (no gain; not used) |
 | Model-size scaling | ✅ faithful |
 | Warmup, grad clip, LayerNorm on `h`, LoRA | implementation details the paper doesn't specify |
 | Phase 1 (domain pre-training on Netflix logs) | ❌ not reproducible (no data); Qwen2.5 used as-is |
-| Multi-position loss, item init from text | ❌ not in paper — out of scope |
 
-## Idea
+## Faithful recipe (final)
 ```
-history → text prompt → LLM → h (last token) → score_i = h · e_i → softmax over all movies
+prompt v4 (user profile + last 20 movies: title [genres] rating) → Qwen2.5 + LoRA
+→ h = LayerNorm(last-token hidden state) → score = h · E → CE over all movies
+L = 0.9·L_rank + 0.1·L_lm(target title), 3 epochs, warmup → linear decay, grad clip 1.0
 ```
+| Size | LR (LoRA) | Warmup | Notes |
+|---|---|---|---|
+| 0.5B | 2e-4 | 5% | |
+| 1.5B / 3B | 1e-4 | 10% | `--grad_ckpt` on 16GB |
+| 7B | 5e-5 | 10% | A100 80GB, `--grad_ckpt` |
 
 ## Data
-- MovieLens-1M (auto-download from GroupLens): `ratings.dat`, `movies.dat`
-- Sort by time per user, keep users with ≥5 ratings
+- MovieLens-1M (auto-download from GroupLens); users with ≥5 ratings, sorted by time
 - Split: leave-one-out (last = test, 2nd last = valid)
-- Prompt (last 20 movies), `--prompt`:
+- Prompt versions (`--prompt`):
   ```
   v2: Watched (rating 1-5): Toy Story (1995) 5; Heat (1995) 3; ...\nNext:          (~270 tokens)
   v3: Watched (rating 1-5): Toy Story (1995) [Animation|Children's|Comedy] 5; ...  (~420 tokens)
@@ -33,71 +38,37 @@ history → text prompt → LLM → h (last token) → score_i = h · e_i → so
   v5: v3 + first synopsis sentence (TMDb, via Kaggle "The Movies Dataset") for the last 5 movies  (~550 tokens)
   ```
 
-## Model
-- Backbone: `Qwen/Qwen2.5-{0.5B,1.5B,3B}` + LoRA (r=16, q/k/v/o); 3B is Qwen Research License (non-commercial), others Apache 2.0
-- `h` = LayerNorm(hidden state of last token)  — raw `h` norm ~300 → huge logits
-- Head: item embeddings `E ∈ R^{N×d}`, `score = h @ E.T`
-- Training: 5–10% linear warmup → linear decay, grad clip 1.0 — without it, training can collapse to popularity
-
-## Loss
-```
-L = (1−β)·CE(score, target_item) + β·LM(target_title)     # paper: α+β=1
-```
-- `--lm_weight β` (default 0 = ranking only); β=0.1 used for 3B and final 7B
-- Optional: weight loss by rating (paper's "reward")
-
-## Inference
-- One forward pass → scores for all movies → mask seen → top-K
-
 ## Eval
-- MRR, HR@10, NDCG@10 (full catalog)
-- Baselines: Popularity, SASRec
+- MRR, HR@10, NDCG@10 over the full catalog (seen items masked)
+- Baselines: Popularity, SASRec (tuned)
+- Run selection by valid NDCG@10 only; test reported once
 
 ## Environment
-| | Apple Silicon (MPS) | 16GB GPU (CUDA) | Cloud 24–80GB GPU |
-|---|---|---|---|
-| Use | Debug, small subset | Main training | Model-size scaling |
-| Max model | ~0.5B | 0.5B full / 1.5–3B LoRA | 7B+ |
-
-- Switch with `--device {cpu,mps,cuda}`
-- Low memory (e.g. 16GB Apple Silicon): add `--grad_ckpt` (~30% slower, much less memory)
-- Windows: use WSL2 + CUDA PyTorch
-
-Measured (RTX 4090, bf16, ~97k samples/epoch; varies ~2× by host):
-| Backbone | Prompt | Time/epoch |
-|---|---|---|
-| 0.5B | v2 | ~12–25 min |
-| 0.5B | v3 | ~25 min |
-| 1.5B | v2 | ~33 min |
-| 1.5B | v3 | ~65 min (needs `--grad_ckpt` on 24GB) |
+- `--device {cpu,mps,cuda}`; `--grad_ckpt` for low memory (~30% slower)
+- Machines: **Cloud** = RTX 4090 ($0.74/h) or A100 80GB (~$1.6/h) · **Local** = RTX 4060 Ti 16GB ($0) · **M1** = Apple M1 (MPS)
+- 3B is Qwen Research License (non-commercial); 0.5B / 1.5B / 7B are Apache 2.0
 
 ## Files
 ```
-common.py  # data + split, metrics, Popularity, device
+common.py  # data + split, metrics, Popularity, run logging
 sasrec.py  # SASRec: model + train
-genrec.py  # GenRec: model + train
+genrec.py  # GenRec: model + train (--prompt, --lm_weight, --rating_weight, --resume)
 plot.py    # runs/ → docs/figures/*.png
 docs/      # plan.md, results.md
-runs/      # (gitignored) <model>_<time>/log.txt, metrics.json, history.csv
+runs/      # (gitignored) <model>_<time>/log.txt, metrics.json, history.csv, *.pt
 ```
-Shared interface: `score_fn(users, histories) -> (B, n_items+1)`
-Run: `uv run python {common,sasrec,genrec}.py`
 
 ## Steps
 | # | Step | Status |
 |---|---|---|
-| 1 | Data: load, split, verbalize | ✅ |
-| 2 | Baselines: Popularity, SASRec | ✅ SASRec tuned NDCG@10 0.182 (untuned 0.168) |
-| 3 | Pipeline on small subset (CPU/MPS) | ✅ |
-| 4 | First GPU run: 0.5B + LoRA | ✅ beats Popularity |
-| 5 | Ablations | 🔄 prompt v2→v3 ✅ (+4%); rating weights ✅ (no gain); v4/v5 ✅ (v5 no gain; v4 +2% at 1.5B, borderline); LM loss ✅ (+2.9%, within noise; kept, faithful); history length ⬜ |
-| 6 | Scaling: 0.5B → 1.5B → 3B → 7B | 🔄 0.5B, 1.5B ✅ (+7%); 7B ✅ (0.1569, 2 ep); epochs: 3 ep is enough (8 ep: no gain, overfits); 3B + LM running (#20); final 7B (#22) |
-| 7 | Data scaling on ML-25M (separate benchmark) | ⬜ after current queue |
-| 8 | README: results + reproduce | ⬜ |
+| 1 | Data, split, verbalize | ✅ |
+| 2 | Baselines: Popularity, SASRec (tuned) | ✅ SASRec 0.1820 |
+| 3 | GenRec pipeline + training stability (warmup, clip) | ✅ |
+| 4 | Faithful ablations: prompts, LM loss, rating weights, epochs | ✅ (history length 🔄 #21) |
+| 5 | Size scaling with the faithful recipe: 0.5B → 1.5B → 3B → 7B | 🔄 3B #20, final 7B #22 |
+| 6 | README: results + reproduce | ⬜ |
 
 ## Runs
-Machines: **Cloud** = RTX 4090 ($0.74/h) or A100 80GB (~$1.4–1.6/h) · **Local** = RTX 4060 Ti 16GB (~2.6× slower than 4090, $0) · **M1** = Apple M1 (MPS)
-
 | # | Run | Status | Machine | Time | Cost | Test NDCG@10 |
 |---|---|---|---|---|---|---|
 | 1 | SASRec (untuned: d=64, 100 ep) | ✅ | M1 | 16 min | $0 | 0.1681 |
@@ -114,16 +85,16 @@ Machines: **Cloud** = RTX 4090 ($0.74/h) or A100 80GB (~$1.4–1.6/h) · **Local
 | 12 | 1.5B v3, 5 ep | ✅ | Local | 19 h | $0 | 0.1627 |
 | 13 | 0.5B v5 | ✅ | Local | 5.6 h | $0 | 0.1520 |
 | 14 | 0.5B v4 | ✅ | Local | 4.0 h | $0 | 0.1530 |
-| 15 | 1.5B v4 (`--grad_ckpt`) | ✅ | Local | 11.8 h | $0 | 0.1581 |
-| 16 | 1.5B v5 (`--grad_ckpt`) | ✅ no gain | Local | 16.8 h | $0 | 0.1552 |
-| 17 | SASRec tuning: d × dropout × heads (5 runs, 200 ep) | ✅ new baseline | M1 | 4 h | $0 | **0.1820** |
-| 18 | 1.5B v4, 8 ep (epoch-count study for final) | ✅ no gain vs 3 ep | Local | 31.8 h | $0 | 0.1558 |
+| 15 | 1.5B v4 | ✅ | Local | 11.8 h | $0 | 0.1581 |
+| 16 | 1.5B v5 | ✅ no gain | Local | 16.8 h | $0 | 0.1552 |
+| 17 | SASRec tuning: d × dropout × heads (5 runs, 200 ep) | ✅ baseline | M1 | 4 h | $0 | **0.1820** |
+| 18 | 1.5B v4, 8 ep | ✅ no gain vs 3 ep | Local | 31.8 h | $0 | 0.1558 |
 | 19 | 0.5B v4 + LM loss (β=0.1) | ✅ neutral (+2.9%) | Local | 4.3 h | $0 | 0.1575 |
-| 20 | 3B v4 + LM loss (`--grad_ckpt`) | 🔄 running | Local | ~18–23 h | $0 | – |
-| 21 | 0.5B v4 + LM loss, history 50 (`--grad_ckpt`) — ablation vs #19 | ⏳ queued | Local | ~11 h | $0 | – |
-| 22 | **Final: 7B v4 + LM loss, 3 ep, lr 5e-5** | ⬜ ready | Cloud A100 80GB | ~9–10 h | ~$15–16 | – |
+| 20 | 3B v4 + LM loss | 🔄 running | Local | ~24 h | $0 | – |
+| 21 | 0.5B v4 + LM loss, history 50 (vs #19) | ⏳ queued | Local | ~11 h | $0 | – |
+| 22 | **Final: 7B v4 + LM loss, 3 ep** | ⬜ ready | Cloud A100 80GB | ~9–10 h | ~$15–16 | – |
 
-### SASRec tuning (#17; Mac M1, 200 ep, selected by valid)
+### SASRec tuning (#17; M1, 200 ep, selected by valid)
 | d | dropout | heads | Valid NDCG@10 | Test NDCG@10 |
 |---|---|---|---|---|
 | 64 | 0.2 | 1 | 0.1772 | 0.1709 |
@@ -132,28 +103,18 @@ Machines: **Cloud** = RTX 4090 ($0.74/h) or A100 80GB (~$1.4–1.6/h) · **Local
 | 128 | 0.5 | 1 | 0.1605 | 0.1546 |
 | **128** | **0.2** | **2** | **0.1942** | **0.1820** ← baseline |
 
-### Final model goal
-Tuned SASRec (0.1820) is the bar; best GenRec so far is 0.1627 (−11%). Projection for 7B v4 at 3–5 ep: ~0.165–0.172 (−5% to −9%) — likely still below SASRec. Goal: close as much of the gap as possible, report the remaining gap honestly.
-
-### Prompt × size grid (test NDCG@10)
-Settings fixed per size (0.5B: lr 2e-4, 5% warmup; 1.5B/3B: lr 1e-4, 10% warmup; 7B: lr 5e-5). 7B is reserved for the final model.
-
+### Prompt × size grid (test NDCG@10, 3 ep)
 | Size \ prompt | v2 | v3 | v4 | v5 |
 |---|---|---|---|---|
-| 0.5B | 0.1441 (#4) | 0.1500 (#7), seed 43: 0.1558 (#10) | 0.1530 (#14) | 0.1520 (#13) |
-| 1.5B | 0.1486 (#5) | 0.1546 (#8), 5 ep: 0.1627 (#12) | 0.1581 (#15) | 0.1552 (#16) |
-| 3B | – | – | #20 (+LM) | – |
-| 7B | – | 0.1569 (#9, 2 ep) | final #22 | – |
+| 0.5B | 0.1441 (#4) | 0.1500 (#7), seed 43: 0.1558 (#10) | 0.1530 (#14), +LM 0.1575 (#19) | 0.1520 (#13) |
+| 1.5B | 0.1486 (#5) | 0.1546 (#8) | 0.1581 (#15) | 0.1552 (#16) |
+| 3B | – | – | +LM #20 | – |
+| 7B | – | 0.1569 (#9, 2 ep) | +LM final #22 | – |
 
-### Planned: ML-25M data scaling (step 7)
-Fixed model (0.5B v3), vary #users sampled from ML-25M; SASRec at each size. Eval on a fixed random 10k-user subset; full catalog (~59k movies). Not comparable to ML-1M numbers.
-
-| # | Run | Status | Machine | Time | Cost | Test NDCG@10 |
-|---|---|---|---|---|---|---|
-| 23 | Code: ML-25M loader, `--dataset`, user subsample, eval subset | ⬜ | – | – | – | – |
-| 24 | SASRec, 10k / 40k / 160k users | ⬜ | Local | ~1–3 h total | $0 | – |
-| 25 | GenRec 0.5B v3, 10k users | ⬜ | Local | ~5 h (3 ep) | $0 | – |
-| 26 | GenRec 0.5B v3, 40k users | ⬜ | Local | ~21 h (3 ep) | $0 | – |
-| 27 | GenRec 0.5B v3, 160k users (optional) | ⬜ | Local / Cloud | ~28 h/epoch Local | $0 / ~$8/epoch | – |
+## Later: beyond the faithful recipe (to discuss)
+Not in the paper; only after the faithful results are final, and always labeled.
+- Multi-position loss (grade every movie in a prompt; ~16–20× more training signal per compute)
+- Item embeddings initialized from text (title / genres / synopsis)
+- ML-25M (more items, long tail, global time split) as a second benchmark
 
 Results → [results.md](results.md)
