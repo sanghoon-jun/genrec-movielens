@@ -64,8 +64,8 @@ runs/      # (gitignored) <model>_<time>/log.txt, metrics.json, history.csv, *.p
 | 1 | Data, split, verbalize | ✅ |
 | 2 | Baselines: Popularity, SASRec (tuned) | ✅ SASRec 0.1820 |
 | 3 | GenRec pipeline + training stability (warmup, clip) | ✅ |
-| 4 | Faithful ablations: prompts, LM loss, rating weights, epochs | ✅ (history length ⏳ #23) |
-| 5 | Size scaling with the full recipe (★): 0.5B → 1.5B → 3B → 7B | 🔄 0.5B ✅, 3B #20, 1.5B #21, 7B #22 |
+| 4 | Development ablations: prompts, LM loss, rating weights, epochs | ✅ (history length ⏳ #29) |
+| 5 | Full-recipe grid (★): v3/v4/v5 × 0.5B/1.5B/3B + 7B v4 | 🔄 0.5B v4 ✅; #20–28 running/queued (~5 days Local) |
 | 6 | README: results + reproduce | ⬜ |
 
 ## Runs
@@ -93,9 +93,15 @@ runs/      # (gitignored) <model>_<time>/log.txt, metrics.json, history.csv, *.p
 | 20 | ★ 3B v4 + LM loss | 🔄 eval | Local | ~25 h | $0 | – |
 | 21 | ★ 1.5B v4 + LM loss | ⏳ queued | Local | ~12.5 h | $0 | – |
 | 22 | ★ **Final: 7B v4 + LM loss** | ⬜ ready | Cloud A100 80GB | ~9–10 h | ~$15–16 | – |
-| 23 | 0.5B v4 + LM loss, history 50 (ablation vs #19) | ⏳ queued | Local | ~11 h | $0 | – |
+| 23 | ★ 0.5B v3 + LM loss | ⏳ queued | Local | ~4 h | $0 | – |
+| 24 | ★ 0.5B v5 + LM loss | ⏳ queued | Local | ~6 h | $0 | – |
+| 25 | ★ 1.5B v3 + LM loss | ⏳ queued | Local | ~12 h | $0 | – |
+| 26 | ★ 1.5B v5 + LM loss | ⏳ queued | Local | ~17 h | $0 | – |
+| 27 | ★ 3B v3 + LM loss | ⏳ queued | Local | ~24 h | $0 | – |
+| 28 | ★ 3B v5 + LM loss | ⏳ queued | Local | ~35 h | $0 | – |
+| 29 | 0.5B v4 + LM loss, history 50 (ablation vs #19) | ⏳ queued | Local | ~11 h | $0 | – |
 
-★ = full faithful recipe (v4 prompt + LM loss, 3 epochs). All other GenRec runs are ablations (ranking-only and/or other prompts/epochs).
+★ = full faithful recipe (LM loss, 3 epochs; prompt v3/v4/v5) → reported in results.md. All other GenRec runs are development runs/ablations, kept here only.
 
 ### SASRec tuning (#17; M1, 200 ep, selected by valid)
 | d | dropout | heads | Valid NDCG@10 | Test NDCG@10 |
@@ -106,13 +112,29 @@ runs/      # (gitignored) <model>_<time>/log.txt, metrics.json, history.csv, *.p
 | 128 | 0.5 | 1 | 0.1605 | 0.1546 |
 | **128** | **0.2** | **2** | **0.1942** | **0.1820** ← baseline |
 
-### Prompt × size grid (test NDCG@10, 3 ep; "+LM" = full recipe ★)
+### Full-recipe grid ★ (test NDCG@10) — reported in results.md
+| Size \ prompt | v3 | v4 | v5 |
+|---|---|---|---|
+| 0.5B | #23 | 0.1575 (#19) | #24 |
+| 1.5B | #25 | #21 | #26 |
+| 3B | #27 | #20 | #28 |
+| 7B | – | #22 | – |
+
+### Development grid (ranking-only, no LM loss; test NDCG@10, 3 ep)
 | Size \ prompt | v2 | v3 | v4 | v5 |
 |---|---|---|---|---|
-| 0.5B | 0.1441 (#4) | 0.1500 (#7), seed 43: 0.1558 (#10) | 0.1530 (#14), +LM 0.1575 (#19) | 0.1520 (#13) |
-| 1.5B | 0.1486 (#5) | 0.1546 (#8) | 0.1581 (#15), +LM #21 | 0.1552 (#16) |
-| 3B | – | – | +LM #20 | – |
-| 7B | – | 0.1569 (#9, 2 ep) | +LM final #22 | – |
+| 0.5B | 0.1441 (#4) | 0.1500 (#7), seed 43: 0.1558 (#10) | 0.1530 (#14) | 0.1520 (#13) |
+| 1.5B | 0.1486 (#5) | 0.1546 (#8) | 0.1581 (#15) | 0.1552 (#16) |
+| 7B | – | 0.1569 (#9, 2 ep) | – | – |
+
+### Development findings (not in results.md)
+- **Stability:** warmup + grad clip required (without them training collapsed to popularity, #3 vs #2); LoRA LR must drop with size (1.5B at 2e-4 stalled)
+- **Noise:** two seeds of 0.5B v3 → 0.1500 / 0.1558 (±2%); differences under ~4% are not significant
+- **Prompts (ranking-only):** v2 → v3 +4% at both sizes; v4 0 / +2%; v5 no gain at +30–60% compute
+- **Size (ranking-only):** 0.5B → 1.5B → 7B flat on test (0.153–0.158)
+- **LM loss:** 0.5B v4 0.1530 → 0.1575 (+2.9%, within noise) → adopted as part of the faithful recipe
+- **Reward (rating) weighting:** 0.1473, no gain (metric counts the next rating regardless of value) → not used
+- **Epochs:** 3 is enough; 5 ep test 0.1627 but valid flat; 8 ep valid 0.1700 → 0.1661 (memorization) → 3 epochs
 
 ## Later: beyond the faithful recipe (to discuss)
 Not in the paper; only after the faithful results are final, and always labeled.
