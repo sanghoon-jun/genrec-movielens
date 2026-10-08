@@ -120,7 +120,7 @@ Machines: **Cloud** = RTX 4090 ($0.74/h) or A100 80GB (~$1.4–1.6/h) · **Local
 | 18 | 1.5B v4, 8 ep (epoch-count study for final) | ✅ no gain vs 3 ep | Local | 31.8 h | $0 | 0.1558 |
 | 19 | 0.5B v4 + LM loss (β=0.1) | ✅ neutral (+2.9%) | Local | 4.3 h | $0 | 0.1575 |
 | 20 | 3B v4 + LM loss (`--grad_ckpt`) | 🔄 running | Local | ~18–23 h | $0 | – |
-| 21 | 0.5B v3, history 50 (`--grad_ckpt`) | ⏳ queued | Local | ~11 h | $0 | – |
+| 21 | 0.5B v4 + LM loss, history 50 (`--grad_ckpt`) — ablation vs #19 | ⏳ queued | Local | ~11 h | $0 | – |
 | 22 | **Final: 7B v4 + LM loss, 3 ep, lr 5e-5** | ⬜ ready | Cloud A100 80GB | ~9–10 h | ~$15–16 | – |
 
 ### SASRec tuning (#17; Mac M1, 200 ep, selected by valid)
