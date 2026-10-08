@@ -10,7 +10,7 @@ Reproduce GenRec as described in the paper on public data (MovieLens-1M) and che
 | Verbalized history → LLM → pooled `h` → `h·e_i`, CE over full catalog | ✅ faithful |
 | Context engineering (prompt versions) | ✅ faithful |
 | Reward weighting (here: rating) | ✅ faithful, tested |
-| LM loss `β·L_language` on the target title | 🔄 faithful, testing |
+| LM loss `β·L_language` on the target title | ✅ faithful; neutral-to-positive (+2.9% at 0.5B), used in final |
 | Model-size scaling | ✅ faithful |
 | Warmup, grad clip, LayerNorm on `h`, LoRA | implementation details the paper doesn't specify |
 | Phase 1 (domain pre-training on Netflix logs) | ❌ not reproducible (no data); Qwen2.5 used as-is |
@@ -43,7 +43,7 @@ history → text prompt → LLM → h (last token) → score_i = h · e_i → so
 ```
 L = (1−β)·CE(score, target_item) + β·LM(target_title)     # paper: α+β=1
 ```
-- `--lm_weight β` (default 0 = ranking only); β=0.1 under test
+- `--lm_weight β` (default 0 = ranking only); β=0.1 used for 3B and final 7B
 - Optional: weight loss by rating (paper's "reward")
 
 ## Inference
@@ -90,8 +90,8 @@ Run: `uv run python {common,sasrec,genrec}.py`
 | 2 | Baselines: Popularity, SASRec | ✅ SASRec tuned NDCG@10 0.182 (untuned 0.168) |
 | 3 | Pipeline on small subset (CPU/MPS) | ✅ |
 | 4 | First GPU run: 0.5B + LoRA | ✅ beats Popularity |
-| 5 | Ablations | 🔄 prompt v2→v3 ✅ (+4%); rating weights ✅ (no gain); v4/v5 ✅ (v5 no gain; v4 +2% at 1.5B, borderline); LM loss 🔄 (#19); history length ⬜ |
-| 6 | Scaling: 0.5B → 1.5B → 3B → 7B | 🔄 0.5B, 1.5B ✅ (+7%); 7B ✅ (0.1569, 2 ep); epochs: 1.5B 3→5 ep +5%, 8 ep 🔄 (#18); 3B queued (#20); final 7B (#22) |
+| 5 | Ablations | 🔄 prompt v2→v3 ✅ (+4%); rating weights ✅ (no gain); v4/v5 ✅ (v5 no gain; v4 +2% at 1.5B, borderline); LM loss ✅ (+2.9%, within noise; kept, faithful); history length ⬜ |
+| 6 | Scaling: 0.5B → 1.5B → 3B → 7B | 🔄 0.5B, 1.5B ✅ (+7%); 7B ✅ (0.1569, 2 ep); epochs: 3 ep is enough (8 ep: no gain, overfits); 3B + LM running (#20); final 7B (#22) |
 | 7 | Data scaling on ML-25M (separate benchmark) | ⬜ after current queue |
 | 8 | README: results + reproduce | ⬜ |
 
@@ -111,17 +111,17 @@ Machines: **Cloud** = RTX 4090 ($0.74/h) or A100 80GB (~$1.4–1.6/h) · **Local
 | 9 | 7B v3, 2 ep, lr 5e-5 | ✅ | Cloud A100 80GB | 6.1 h | $9.60 (+$0.65 crashed start) | 0.1569 |
 | 10 | 0.5B v3, seed 43 (noise check) | ✅ | Local | 3.4 h | $0 | 0.1558 |
 | 11 | 0.5B v3, rating-weighted loss | ✅ no gain | Local | 4.0 h | $0 | 0.1473 |
-| 12 | 1.5B v3, 5 ep | ✅ best | Local | 19 h | $0 | **0.1627** |
+| 12 | 1.5B v3, 5 ep | ✅ | Local | 19 h | $0 | 0.1627 |
 | 13 | 0.5B v5 | ✅ | Local | 5.6 h | $0 | 0.1520 |
 | 14 | 0.5B v4 | ✅ | Local | 4.0 h | $0 | 0.1530 |
 | 15 | 1.5B v4 (`--grad_ckpt`) | ✅ | Local | 11.8 h | $0 | 0.1581 |
 | 16 | 1.5B v5 (`--grad_ckpt`) | ✅ no gain | Local | 16.8 h | $0 | 0.1552 |
 | 17 | SASRec tuning: d × dropout × heads (5 runs, 200 ep) | ✅ new baseline | M1 | 4 h | $0 | **0.1820** |
-| 18 | 1.5B v4, 8 ep (epoch-count study for final) | 🔄 running (valid ep1/2: 0.1145 / 0.1388) | Local | ~31 h | $0 | – |
-| 19 | 0.5B v4 + LM loss (β=0.1) | ⏳ queued | Local | ~4.5 h | $0 | – |
-| 20 | 3B v4 (`--grad_ckpt`) | ⏳ queued | Local | ~17–22 h | $0 | – |
+| 18 | 1.5B v4, 8 ep (epoch-count study for final) | ✅ no gain vs 3 ep | Local | 31.8 h | $0 | 0.1558 |
+| 19 | 0.5B v4 + LM loss (β=0.1) | ✅ neutral (+2.9%) | Local | 4.3 h | $0 | 0.1575 |
+| 20 | 3B v4 + LM loss (`--grad_ckpt`) | 🔄 running | Local | ~18–23 h | $0 | – |
 | 21 | 0.5B v3, history 50 (`--grad_ckpt`) | ⏳ queued | Local | ~11 h | $0 | – |
-| 22 | **Final: 7B v4, epochs from #18, LM loss per #19, lr 5e-5** | ⬜ after #18, #19 | Cloud A100 80GB | ~9–16 h | ~$15–26 | – |
+| 22 | **Final: 7B v4 + LM loss, 3 ep, lr 5e-5** | ⬜ ready | Cloud A100 80GB | ~9–10 h | ~$15–16 | – |
 
 ### SASRec tuning (#17; Mac M1, 200 ep, selected by valid)
 | d | dropout | heads | Valid NDCG@10 | Test NDCG@10 |
@@ -142,7 +142,7 @@ Settings fixed per size (0.5B: lr 2e-4, 5% warmup; 1.5B/3B: lr 1e-4, 10% warmup;
 |---|---|---|---|---|
 | 0.5B | 0.1441 (#4) | 0.1500 (#7), seed 43: 0.1558 (#10) | 0.1530 (#14) | 0.1520 (#13) |
 | 1.5B | 0.1486 (#5) | 0.1546 (#8), 5 ep: 0.1627 (#12) | 0.1581 (#15) | 0.1552 (#16) |
-| 3B | – | – | #20 | – |
+| 3B | – | – | #20 (+LM) | – |
 | 7B | – | 0.1569 (#9, 2 ep) | final #22 | – |
 
 ### Planned: ML-25M data scaling (step 7)

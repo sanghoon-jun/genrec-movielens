@@ -43,7 +43,8 @@ def label(path, info):
     if model == "genrec" and info:
         prompt = info["args"].get("prompt", "v2")
         ep = info["args"].get("epochs", 1)
-        return f"GenRec {info['args']['backbone'].split('/')[-1]}" + ("" if prompt == "v2" else f" {prompt}") + f" ({ep} ep)"
+        lm = " +LM" if info["args"].get("lm_weight", 0) > 0 else ""
+        return f"GenRec {info['args']['backbone'].split('/')[-1]}" + ("" if prompt == "v2" else f" {prompt}") + lm + f" ({ep} ep)"
     return {"sasrec": "SASRec"}.get(model, model)
 
 
@@ -114,7 +115,8 @@ def plot_scaling(runs):
     cells, sasrec = {}, None
     for p, info in main_runs():
         a = info["args"]
-        size = re.search(r"(\d+(?:\.\d+)?)B", a.get("backbone", "")) if p.name.startswith("genrec") else None
+        lm = a.get("lm_weight", 0) > 0  # prompt lines compare prompts only; LM-loss runs stay out
+        size = re.search(r"(\d+(?:\.\d+)?)B", a.get("backbone", "")) if p.name.startswith("genrec") and not lm else None
         if size:
             key, ep = (a.get("prompt", "v2"), float(size.group(1))), a.get("epochs", 1)
             rank = (-abs(ep - SCALING_EPOCHS), valid_score(p, info))  # closest to SCALING_EPOCHS, then best valid
