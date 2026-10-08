@@ -64,8 +64,8 @@ runs/      # (gitignored) <model>_<time>/log.txt, metrics.json, history.csv, *.p
 | 1 | Data, split, verbalize | ✅ |
 | 2 | Baselines: Popularity, SASRec (tuned) | ✅ SASRec 0.1820 |
 | 3 | GenRec pipeline + training stability (warmup, clip) | ✅ |
-| 4 | Faithful ablations: prompts, LM loss, rating weights, epochs | ✅ (history length 🔄 #21) |
-| 5 | Size scaling with the faithful recipe: 0.5B → 1.5B → 3B → 7B | 🔄 3B #20, final 7B #22 |
+| 4 | Faithful ablations: prompts, LM loss, rating weights, epochs | ✅ (history length ⏳ #23) |
+| 5 | Size scaling with the full recipe (★): 0.5B → 1.5B → 3B → 7B | 🔄 0.5B ✅, 3B #20, 1.5B #21, 7B #22 |
 | 6 | README: results + reproduce | ⬜ |
 
 ## Runs
@@ -89,10 +89,13 @@ runs/      # (gitignored) <model>_<time>/log.txt, metrics.json, history.csv, *.p
 | 16 | 1.5B v5 | ✅ no gain | Local | 16.8 h | $0 | 0.1552 |
 | 17 | SASRec tuning: d × dropout × heads (5 runs, 200 ep) | ✅ baseline | M1 | 4 h | $0 | **0.1820** |
 | 18 | 1.5B v4, 8 ep | ✅ no gain vs 3 ep | Local | 31.8 h | $0 | 0.1558 |
-| 19 | 0.5B v4 + LM loss (β=0.1) | ✅ neutral (+2.9%) | Local | 4.3 h | $0 | 0.1575 |
-| 20 | 3B v4 + LM loss | 🔄 running | Local | ~24 h | $0 | – |
-| 21 | 0.5B v4 + LM loss, history 50 (vs #19) | ⏳ queued | Local | ~11 h | $0 | – |
-| 22 | **Final: 7B v4 + LM loss, 3 ep** | ⬜ ready | Cloud A100 80GB | ~9–10 h | ~$15–16 | – |
+| 19 | ★ 0.5B v4 + LM loss | ✅ (+2.9% vs #14) | Local | 4.3 h | $0 | 0.1575 |
+| 20 | ★ 3B v4 + LM loss | 🔄 eval | Local | ~25 h | $0 | – |
+| 21 | ★ 1.5B v4 + LM loss | ⏳ queued | Local | ~12.5 h | $0 | – |
+| 22 | ★ **Final: 7B v4 + LM loss** | ⬜ ready | Cloud A100 80GB | ~9–10 h | ~$15–16 | – |
+| 23 | 0.5B v4 + LM loss, history 50 (ablation vs #19) | ⏳ queued | Local | ~11 h | $0 | – |
+
+★ = full faithful recipe (v4 prompt + LM loss, 3 epochs). All other GenRec runs are ablations (ranking-only and/or other prompts/epochs).
 
 ### SASRec tuning (#17; M1, 200 ep, selected by valid)
 | d | dropout | heads | Valid NDCG@10 | Test NDCG@10 |
@@ -103,11 +106,11 @@ runs/      # (gitignored) <model>_<time>/log.txt, metrics.json, history.csv, *.p
 | 128 | 0.5 | 1 | 0.1605 | 0.1546 |
 | **128** | **0.2** | **2** | **0.1942** | **0.1820** ← baseline |
 
-### Prompt × size grid (test NDCG@10, 3 ep)
+### Prompt × size grid (test NDCG@10, 3 ep; "+LM" = full recipe ★)
 | Size \ prompt | v2 | v3 | v4 | v5 |
 |---|---|---|---|---|
 | 0.5B | 0.1441 (#4) | 0.1500 (#7), seed 43: 0.1558 (#10) | 0.1530 (#14), +LM 0.1575 (#19) | 0.1520 (#13) |
-| 1.5B | 0.1486 (#5) | 0.1546 (#8) | 0.1581 (#15) | 0.1552 (#16) |
+| 1.5B | 0.1486 (#5) | 0.1546 (#8) | 0.1581 (#15), +LM #21 | 0.1552 (#16) |
 | 3B | – | – | +LM #20 | – |
 | 7B | – | 0.1569 (#9, 2 ep) | +LM final #22 | – |
 

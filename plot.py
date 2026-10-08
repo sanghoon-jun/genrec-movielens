@@ -17,7 +17,8 @@ import matplotlib.ticker
 from common import RUNS
 
 OUT = Path(__file__).parent / "docs" / "figures"
-SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]  # validated categorical order
+SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"]  # validated categorical order
+LINE_COLOR = {"v2": 0, "v3": 1, "v4": 2, "v5": 3, "v4+LM": 4}  # color follows the prompt, never its rank
 SURFACE, INK, INK2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e1"
 
 plt.rcParams.update({
@@ -115,10 +116,11 @@ def plot_scaling(runs):
     cells, sasrec = {}, None
     for p, info in main_runs():
         a = info["args"]
-        lm = a.get("lm_weight", 0) > 0  # prompt lines compare prompts only; LM-loss runs stay out
-        size = re.search(r"(\d+(?:\.\d+)?)B", a.get("backbone", "")) if p.name.startswith("genrec") and not lm else None
+        lm = a.get("lm_weight", 0) > 0  # LM-loss runs form their own line ("v4+LM" = full faithful recipe)
+        size = re.search(r"(\d+(?:\.\d+)?)B", a.get("backbone", "")) if p.name.startswith("genrec") else None
         if size:
-            key, ep = (a.get("prompt", "v2"), float(size.group(1))), a.get("epochs", 1)
+            line = a.get("prompt", "v2") + ("+LM" if lm else "")
+            key, ep = (line, float(size.group(1))), a.get("epochs", 1)
             rank = (-abs(ep - SCALING_EPOCHS), valid_score(p, info))  # closest to SCALING_EPOCHS, then best valid
             if key not in cells or rank > cells[key][0]:
                 cells[key] = (rank, ep, info["metrics"]["NDCG@10"])
@@ -134,9 +136,12 @@ def plot_scaling(runs):
 
     fig, ax = plt.subplots(figsize=(6, 4))
     sizes = sorted({x for pts in points.values() for x, _, _ in pts})
-    for i, (color, (prompt, pts)) in enumerate(zip(SERIES, sorted(points.items()))):
+    for prompt, pts in sorted(points.items()):
+        color = SERIES[LINE_COLOR.get(prompt, 0)]
         xs, ys, eps = zip(*sorted(pts))
-        ax.plot(xs, ys, "-o", color=color, markeredgecolor=SURFACE, markeredgewidth=2, label=f"GenRec ({prompt} prompt)")
+        name = "GenRec full recipe (v4 + LM loss)" if prompt == "v4+LM" else f"GenRec ({prompt} prompt, ranking only)"
+        ax.plot(xs, ys, "-o", color=color, markeredgecolor=SURFACE, markeredgewidth=2.5 if prompt == "v4+LM" else 2,
+                linewidth=2.5 if prompt == "v4+LM" else 1.5, label=name)
         for x, y, ep in zip(xs, ys, eps):  # exact values live in results.md; only flag off-schedule points
             if ep != SCALING_EPOCHS:
                 ax.annotate(f"{ep} ep", (x, y), xytext=(8, 0), textcoords="offset points", va="center", fontsize=9, color=INK2)
