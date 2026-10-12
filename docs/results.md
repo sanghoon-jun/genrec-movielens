@@ -8,8 +8,8 @@ All GenRec numbers use the **full faithful recipe**: LM loss β=0.1, 3 epochs, p
 | Size \ prompt | v3 (+genres) | v4 (+user profile) | v5 (+synopsis) |
 |---|---|---|---|
 | 0.5B | 0.1535 | 0.1575 | 0.1529 |
-| 1.5B | 0.1582 | 0.1581 | 🔄 |
-| 3B | ⏳ | **0.1615** | ⏳ |
+| 1.5B | 0.1582 | 0.1581 | 0.1569 |
+| 3B | 0.1595 | **0.1615** | 🔄 |
 | 7B | – | ⬜ | – |
 
 Baselines: **SASRec (tuned) 0.1820**, Popularity 0.0180.
@@ -24,6 +24,8 @@ Baselines: **SASRec (tuned) 0.1820**, Popularity 0.0180.
 | GenRec 0.5B v5 | 0.1321 | 0.2675 | 0.1529 | −16% | 374.2 min | RTX 4060 Ti (Local) | $0 |
 | GenRec 1.5B v3 | 0.1371 | 0.2742 | 0.1582 | −13% | 708.0 min | RTX 4060 Ti (Local) | $0 |
 | GenRec 1.5B v4 | 0.1380 | 0.2714 | 0.1581 | −13% | 737.1 min | RTX 4060 Ti (Local) | $0 |
+| GenRec 1.5B v5 | 0.1359 | 0.2719 | 0.1569 | −14% | 1028.5 min | RTX 4060 Ti (Local) | $0 |
+| GenRec 3B v3 | 0.1396 | 0.2722 | 0.1595 | −12% | 1438.3 min | RTX 4060 Ti (Local) | $0 |
 | GenRec 3B v4 | 0.1404 | 0.2780 | 0.1615 | −11% | 1494.7 min | RTX 4060 Ti (Local) | $0 |
 
 ## Figures
