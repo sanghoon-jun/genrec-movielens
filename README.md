@@ -2,7 +2,10 @@
 
 A public-data reproduction of [GenRec: An LLM-Backed Recommendation Ranker at Netflix](https://arxiv.org/html/2608.10257v2) on MovieLens-1M, compared against a tuned SASRec.
 
+**Docs:** [results](docs/results.md) (all metrics, curves, settings) · [plan](docs/plan.md) (remaining runs, next ideas)
+
 **Question:** does the paper's recipe beat a standard sequential recommender on the same data?
+
 **Answer so far:** no. The best GenRec (Qwen2.5-3B, `profile` prompt) reaches test NDCG@10 **0.1615**, 11% below SASRec's **0.1820**. A 7B run is pending.
 
 | Size \ prompt | genres | profile | synopsis |
@@ -83,7 +86,7 @@ common.py  # data, split, metrics, Popularity, run logging
 sasrec.py  # SASRec baseline
 genrec.py  # GenRec model + training
 plot.py    # figures
-docs/      # results.md, plan.md (remaining work)
+docs/      # results.md (full results), plan.md (remaining work)
 ```
 
 ## Notes
