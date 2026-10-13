@@ -18,7 +18,8 @@ from common import RUNS
 
 OUT = Path(__file__).parent / "docs" / "figures"
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"]  # validated categorical order
-LINE_COLOR = {"v3": 1, "v4": 2, "v5": 3}  # color follows the prompt, never its rank
+LINE_COLOR = {"genres": 1, "profile": 2, "synopsis": 3}  # color follows the prompt, never its rank
+OLD_PROMPT = {"v2": "rating", "v3": "genres", "v4": "profile", "v5": "synopsis"}  # runs made before the rename
 SURFACE, INK, INK2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e1"
 
 plt.rcParams.update({
@@ -39,10 +40,15 @@ def read_run(path):
     return info, hist
 
 
+def prompt_of(args):
+    p = args.get("prompt", "rating")
+    return OLD_PROMPT.get(p, p)
+
+
 def label(path, info):
     model = path.name.split("_")[0]
     if model == "genrec" and info:
-        prompt = info["args"].get("prompt", "v2")
+        prompt = prompt_of(info["args"])
         return f"GenRec {info['args']['backbone'].split('/')[-1]} {prompt}"
     return {"sasrec": "SASRec"}.get(model, model)
 
@@ -117,7 +123,7 @@ def plot_scaling(runs):
         a = info["args"]
         size = re.search(r"(\d+(?:\.\d+)?)B", a.get("backbone", "")) if p.name.startswith("genrec") else None
         if size:
-            line = a.get("prompt", "v2")
+            line = prompt_of(a)
             key, ep = (line, float(size.group(1))), a.get("epochs", 1)
             rank = (-abs(ep - SCALING_EPOCHS), valid_score(p, info))  # closest to SCALING_EPOCHS, then best valid
             if key not in cells or rank > cells[key][0]:

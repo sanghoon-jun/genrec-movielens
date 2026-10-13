@@ -15,19 +15,20 @@ from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 from common import add_synopses, evaluate, fmt, load, log_history, machine, pick_device, save_metrics, start_run
 
 
-SYNOPSIS_LAST = 5  # v5: synopsis only for the most recent movies (token budget)
+PROMPTS = {"rating": "title + rating", "genres": "+ genres", "profile": "genres + user profile",
+           "synopsis": "genres + synopsis for the last 5 movies"}
+SYNOPSIS_LAST = 5  # synopsis prompt: only for the most recent movies (token budget)
 
 
-def verbalize(d, items, ratings, n, prompt="v2", user=None):
-    # v2: title + rating; v3: + genres; v4: v3 + user profile; v5: v3 + first-sentence synopsis for the last 5 movies
+def verbalize(d, items, ratings, n, prompt="rating", user=None):
     items, ratings = items[-n:], ratings[-n:]
 
     def movie(k, i, r):
-        genres = f" [{d.movies.genres[i]}]" if prompt in ("v3", "v4", "v5") else ""
-        syn = d.movies.synopsis[i] if prompt == "v5" and k >= len(items) - SYNOPSIS_LAST else ""
+        genres = f" [{d.movies.genres[i]}]" if prompt != "rating" else ""
+        syn = d.movies.synopsis[i] if prompt == "synopsis" and k >= len(items) - SYNOPSIS_LAST else ""
         return f"{d.movies.title[i]}{genres} {r}" + (f" ({syn})" if syn else "")
     movies = "; ".join(movie(k, i, r) for k, (i, r) in enumerate(zip(items, ratings)))
-    user_line = f"User: {d.profiles[user]}\n" if prompt == "v4" else ""
+    user_line = f"User: {d.profiles[user]}\n" if prompt == "profile" else ""
     return f"{user_line}Watched (rating 1-5): {movies}\nNext:"
 
 
@@ -115,7 +116,7 @@ def train(args):
     device = pick_device(args.device)
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
     d = load()
-    if args.prompt == "v5":
+    if args.prompt == "synopsis":
         add_synopses(d)
     if args.users:
         d.seqs, d.ratings = d.seqs[:args.users], d.ratings[:args.users]
@@ -196,8 +197,8 @@ if __name__ == "__main__":
     p.add_argument("--device", choices=["cpu", "mps", "cuda"])
     p.add_argument("--users", type=int, help="subset for quick debugging")
     p.add_argument("--history", type=int, default=20, help="movies in prompt")
-    p.add_argument("--prompt", choices=["v2", "v3", "v4", "v5"], default="v2",
-                   help="v2: title+rating, v3: +genres, v4: v3 + user profile, v5: v3 + synopsis for last 5 movies")
+    p.add_argument("--prompt", choices=list(PROMPTS), default="rating",
+                   help=", ".join(f"{k}: {v}" for k, v in PROMPTS.items()))
     p.add_argument("--samples_per_user", type=int, default=16)
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--batch_size", type=int, default=8)
