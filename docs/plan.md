@@ -65,7 +65,7 @@ runs/      # (gitignored) <model>_<time>/log.txt, metrics.json, history.csv, *.p
 | 2 | Baselines: Popularity, SASRec (tuned) | ✅ SASRec 0.1820 |
 | 3 | GenRec pipeline + training stability (warmup, clip) | ✅ |
 | 4 | Development ablations: prompts, LM loss, rating weights, epochs | ✅ (history length ⏳ #29) |
-| 5 | Full-recipe grid (★): v3/v4/v5 × 0.5B/1.5B/3B + 7B v4 | 🔄 8/10 done; #28 running (~1 day Local), 7B pending |
+| 5 | Full-recipe grid (★): v3/v4/v5 × 0.5B/1.5B/3B + 7B v4 | 🔄 9/10 done (0.5B–3B complete); 7B pending |
 | 6 | README: results + reproduce | ⬜ |
 
 ## Runs
@@ -98,8 +98,8 @@ runs/      # (gitignored) <model>_<time>/log.txt, metrics.json, history.csv, *.p
 | 25 | ★ 1.5B v3 + LM loss | ✅ | Local | 11.8 h | $0 | 0.1582 |
 | 26 | ★ 1.5B v5 + LM loss | ✅ | Local | 17.1 h | $0 | 0.1569 |
 | 27 | ★ 3B v3 + LM loss | ✅ | Local | 24.0 h | $0 | 0.1595 |
-| 28 | ★ 3B v5 + LM loss | 🔄 running | Local | ~35 h | $0 | – |
-| 29 | 0.5B v4 + LM loss, history 50 (ablation vs #19) | ⏳ queued | Local | ~11 h | $0 | – |
+| 28 | ★ 3B v5 + LM loss | ✅ | Local | 33.8 h | $0 | 0.1580 |
+| 29 | 0.5B v4 + LM loss, history 50 (ablation vs #19) | 🔄 running | Local | ~11 h | $0 | – |
 
 ★ = full faithful recipe (LM loss, 3 epochs; prompt v3/v4/v5) → reported in results.md. All other GenRec runs are development runs/ablations, kept here only.
 
@@ -117,7 +117,7 @@ runs/      # (gitignored) <model>_<time>/log.txt, metrics.json, history.csv, *.p
 |---|---|---|---|
 | 0.5B | 0.1535 (#23) | 0.1575 (#19) | 0.1529 (#24) |
 | 1.5B | 0.1582 (#25) | 0.1581 (#21) | 0.1569 (#26) |
-| 3B | 0.1595 (#27) | 0.1615 (#20) | #28 |
+| 3B | 0.1595 (#27) | 0.1615 (#20) | 0.1580 (#28) |
 | 7B | – | #22 | – |
 
 ### Development grid (ranking-only, no LM loss; test NDCG@10, 3 ep)
