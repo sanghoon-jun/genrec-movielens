@@ -34,7 +34,7 @@ L = 0.9·L_rank + 0.1·L_lm(target title)
 | Reward weighting | ✅ tested with ratings (no gain; off) |
 | Model-size scaling | ✅ 0.5B → 7B |
 | Phase 1 (domain pre-training on Netflix logs) | ❌ no public equivalent; Qwen2.5 used as-is |
-| Warmup, grad clip, LayerNorm on `h`, LoRA r=16 | not specified in the paper; ours |
+| Warmup, grad clip, LayerNorm on `h`, LoRA r=16 | Not given in the paper; our choice |
 
 ## Prompts
 The history is the user's last 20 movies, oldest first. `--prompt` picks what each prompt contains:
