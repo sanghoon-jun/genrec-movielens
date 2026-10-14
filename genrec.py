@@ -115,6 +115,8 @@ def train(args):
     random.seed(args.seed)
     device = pick_device(args.device)
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
+    if device == "cuda":  # cuDNN attention (used on H100-class GPUs) made training NaN; A100 is unaffected
+        torch.backends.cuda.enable_cudnn_sdp(False)
     d = load()
     if args.prompt == "synopsis":
         add_synopses(d)
@@ -160,6 +162,8 @@ def train(args):
                 w = torch.tensor(rating, device=device, dtype=torch.float)
                 loss = loss * w / w.mean()
             loss = (1 - args.lm_weight) * loss.mean() + args.lm_weight * lm_loss
+            if not torch.isfinite(loss):
+                raise FloatingPointError(f"non-finite loss at epoch {epoch} step {step}")
             opt.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(params, args.clip)

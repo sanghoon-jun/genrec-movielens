@@ -112,6 +112,8 @@ def evaluate(score_fn, d, split="test", k=10, batch_size=256):
     for i in range(0, len(targets), batch_size):
         hist, tgt = histories[i:i + batch_size], targets[i:i + batch_size]
         scores = score_fn(range(i, i + len(hist)), hist).float().cpu()
+        if scores.isnan().any():  # NaN would rank every target first
+            raise FloatingPointError("NaN scores")
         scores[:, 0] = -math.inf                     # padding
         for row, h in enumerate(hist):
             scores[row, h] = -math.inf               # already seen
