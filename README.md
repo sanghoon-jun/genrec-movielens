@@ -6,13 +6,14 @@ A public-data reproduction of [GenRec: An LLM-Backed Recommendation Ranker at Ne
 
 **Question:** does the paper's recipe beat a standard sequential recommender on the same data?
 
-**Answer so far:** no. The best GenRec (Qwen2.5-3B, `profile` prompt) reaches test NDCG@10 **0.1615**, 11% below SASRec's **0.1820**. A 7B run is pending.
+**Answer:** no. The best GenRec (Qwen2.5-3B, `profile` prompt) reaches test NDCG@10 **0.1615**, 11% below SASRec's **0.1820**. Scaling to 7B does not close the gap (0.1610).
 
 | Size \ prompt | genres | profile | synopsis |
 |---|---|---|---|
 | 0.5B | 0.1535 | 0.1575 | 0.1529 |
 | 1.5B | 0.1582 | 0.1581 | 0.1569 |
 | 3B | 0.1595 | **0.1615** | 0.1580 |
+| 7B | – | 0.1610 | – |
 
 Test NDCG@10, full faithful recipe. SASRec (tuned) 0.1820 · Popularity 0.0180. All metrics, training curves and settings: [docs/results.md](docs/results.md).
 
@@ -31,7 +32,7 @@ L = 0.9·L_rank + 0.1·L_lm(target title)
 | Context engineering (prompt versions, history length) | ✅ |
 | LM loss `β·L_language` on the target title | ✅ β = 0.1 |
 | Reward weighting | ✅ tested with ratings (no gain; off) |
-| Model-size scaling | ✅ 0.5B → 3B (7B pending) |
+| Model-size scaling | ✅ 0.5B → 7B |
 | Phase 1 (domain pre-training on Netflix logs) | ❌ no public equivalent; Qwen2.5 used as-is |
 | Warmup, grad clip, LayerNorm on `h`, LoRA r=16 | not specified in the paper; ours |
 
@@ -70,7 +71,7 @@ uv run python genrec.py --backbone Qwen/Qwen2.5-3B --prompt profile --epochs 3 -
 uv run python plot.py                                      # runs/ → docs/figures/
 ```
 - `--device {cpu,mps,cuda}` (auto by default); `--grad_ckpt` trades ~30% speed for memory
-- Up to 3B fits a 16GB GPU with `--grad_ckpt`; 7B needs an 80GB GPU
+- Up to 3B fits a 16GB GPU with `--grad_ckpt`; 7B needs an 80GB GPU (`scripts/modal_run.py` runs it on Modal)
 - Each run writes `runs/<model>_<time>/` (log, metrics, history, checkpoints); `--resume` continues from a checkpoint
 
 | Size | LoRA LR | Warmup | 3 epochs on an RTX 4060 Ti 16GB |
@@ -78,7 +79,7 @@ uv run python plot.py                                      # runs/ → docs/figu
 | 0.5B | 2e-4 | 5% | ~4 h |
 | 1.5B | 1e-4 | 10% | ~12 h |
 | 3B | 1e-4 | 10% | ~25 h |
-| 7B | 5e-5 | 10% | – (A100 80GB, ~9–10 h) |
+| 7B | 5e-5 | 10% | – (A100 80GB: 9.4 h · H100: 4.2 h) |
 
 ## Files
 ```
@@ -86,6 +87,7 @@ common.py  # data, split, metrics, Popularity, run logging
 sasrec.py  # SASRec baseline
 genrec.py  # GenRec model + training
 plot.py    # figures
+scripts/   # modal_run.py: run genrec.py on a Cloud GPU (Modal)
 docs/      # results.md (full results), plan.md (remaining work)
 ```
 

@@ -5,8 +5,7 @@ Remaining work. Overview → [README](../README.md) · results → [results.md](
 ## Remaining
 | Task | Status | Machine | Time | Cost |
 |---|---|---|---|---|
-| **Final: 7B profile + LM loss** (full recipe) | ⬜ ready | Cloud A100 80GB | ~9–10 h | ~$15–16 |
-| 0.5B profile + LM loss, history 50 (ablation) | 🔄 running | Local | ~11 h | $0 |
+| 0.5B profile + LM loss, history 50 (ablation) | 🔄 running | Local | ~30 h | $0 |
 
 ## Later: beyond the faithful recipe (to discuss)
 Not in the paper; only after the faithful results are final, and always labeled.
