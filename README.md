@@ -6,7 +6,9 @@ A public-data reproduction of [GenRec: An LLM-Backed Recommendation Ranker at Ne
 
 **Question:** does the paper's recipe beat a standard sequential recommender on the same data?
 
-**Answer:** no. The best GenRec (Qwen2.5-3B, `profile` prompt) reaches test NDCG@10 **0.1615**, 11% below SASRec's **0.1820**. Scaling to 7B does not close the gap (0.1610).
+**Answer:** not as the paper describes it. The best faithful GenRec (Qwen2.5-3B, `profile` prompt) reaches test NDCG@10 **0.1615**, 11% below SASRec's **0.1820**. Scaling to 7B does not close the gap (0.1610).
+
+With one change it does: **GenRec-AP** (`--all_positions`, not in the paper) ranks the next movie after every movie in the prompt, as SASRec does, not only after the last one. At 0.5B it reaches **0.1926**, 6% above SASRec (tuned) and level with SASRec trained on every position the same way (0.1905). The gap was the training signal (one label per prompt), not model size or prompt. The GenRec-AP size × prompt grid is running ([plan](docs/plan.md)).
 
 | Size \ prompt | genres | profile | synopsis |
 |---|---|---|---|
@@ -15,7 +17,7 @@ A public-data reproduction of [GenRec: An LLM-Backed Recommendation Ranker at Ne
 | 3B | 0.1595 | **0.1615** | 0.1580 |
 | 7B | – | 0.1610 | – |
 
-Test NDCG@10, full faithful recipe. SASRec (tuned) 0.1820 · Popularity 0.0180. All metrics, training curves and settings: [docs/results.md](docs/results.md).
+Test NDCG@10, full faithful recipe. SASRec (tuned) 0.1820 · SASRec (chunked) 0.1905 · GenRec-AP 0.5B profile 0.1926 · Popularity 0.0180. All metrics, training curves and settings: [docs/results.md](docs/results.md).
 
 ![Scaling](docs/figures/scaling.png)
 
@@ -35,6 +37,8 @@ L = 0.9·L_rank + 0.1·L_lm(target title)
 | Model-size scaling | ✅ 0.5B → 7B |
 | Phase 1 (domain pre-training on Netflix logs) | ❌ no public equivalent; Qwen2.5 used as-is |
 | Warmup, grad clip, LayerNorm on `h`, LoRA r=16 | Not given in the paper; our choice |
+
+**GenRec-AP** (`--all_positions`, our variant): each user's history is cut into 20-movie chunks at a random offset per epoch, so every train target is used once per epoch (~55K prompts and ~982K labels per epoch, vs ~97K and ~97K). The `h` after each movie (at its `;`; at `Next:` for the last movie, as in evaluation) ranks the next movie; attention is causal, so it sees only the movies up to it. The LM loss and evaluation are unchanged. Its baseline is **SASRec (chunked)** (`sasrec.py --chunk --max_len 20`), which gets the same all-position training with 20 movies of context.
 
 ## Prompts
 The history is the user's last 20 movies, oldest first. `--prompt` picks what each prompt contains:
@@ -68,7 +72,9 @@ uv run python sasrec.py --dim 128 --heads 2 --epochs 200 --eval_every 10
 uv run python genrec.py --prompt profile --epochs 3 --lm_weight 0.1   # 0.5B
 uv run python genrec.py --backbone Qwen/Qwen2.5-3B --prompt profile --epochs 3 --lm_weight 0.1 \
     --lr 1e-4 --warmup 0.1 --grad_ckpt                                 # 1.5B / 3B
-uv run python plot.py                                      # runs/ → docs/figures/
+uv run python genrec.py --all_positions --prompt profile --epochs 3 --lm_weight 0.1   # GenRec-AP 0.5B
+uv run python sasrec.py --chunk --max_len 20 --dim 128 --heads 2 --epochs 150 --eval_every 10 --batch_size 256
+uv run python plot.py                                      # runs/ → docs/figures/ (faithful recipe only)
 ```
 - `--device {cpu,mps,cuda}` (auto by default); `--grad_ckpt` trades ~30% speed for memory
 - Up to 3B fits a 16GB GPU with `--grad_ckpt`; 7B needs an 80GB GPU (`scripts/modal_run.py` runs it on Modal)
@@ -80,6 +86,8 @@ uv run python plot.py                                      # runs/ → docs/figu
 | 1.5B | 1e-4 | 10% | ~12 h |
 | 3B | 1e-4 | 10% | ~25 h |
 | 7B | 5e-5 | 10% | – (A100 80GB: 9.4 h · H100: 4.2 h) |
+
+GenRec-AP takes ~65% of these times (0.5B: 2.7 h); SASRec (chunked) takes ~32 min on an Apple M1.
 
 ## Files
 ```
@@ -93,4 +101,5 @@ docs/      # results.md (full results), plan.md (remaining work)
 
 ## Notes
 - Run-to-run noise is about ±2%; differences under ~4% are not significant
+- Until 2026-10-15 the prompts showed the wrong ratings next to the movies (fixed); a 0.5B rerun scored the same within noise (0.1562 vs 0.1575), so earlier results stand ([details](docs/results.md))
 - Qwen2.5-3B is under the Qwen Research License (non-commercial); 0.5B / 1.5B / 7B are Apache 2.0
