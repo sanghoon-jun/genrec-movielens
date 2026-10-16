@@ -1,8 +1,10 @@
 """GenRec: history -> text -> LLM -> h (last token) -> score = h @ E.T
 
 Same head and loss as sasrec.py; only the encoder differs.
+--all_positions (GenRec-AP, not in the paper): rank the next movie after every movie in the prompt, as SASRec does.
 """
 import argparse
+import bisect
 import random
 import time
 
@@ -20,16 +22,26 @@ PROMPTS = {"rating": "title + rating", "genres": "+ genres", "profile": "genres 
 SYNOPSIS_LAST = 5  # synopsis prompt: only for the most recent movies (token budget)
 
 
-def verbalize(d, items, ratings, n, prompt="rating", user=None):
+def verbalize(d, items, ratings, n, prompt="rating", user=None, ends=False):
+    """ratings aligned with items. ends=True also returns the char index of the ';' after each movie but the last."""
     items, ratings = items[-n:], ratings[-n:]
 
     def movie(k, i, r):
         genres = f" [{d.movies.genres[i]}]" if prompt != "rating" else ""
         syn = d.movies.synopsis[i] if prompt == "synopsis" and k >= len(items) - SYNOPSIS_LAST else ""
         return f"{d.movies.title[i]}{genres} {r}" + (f" ({syn})" if syn else "")
-    movies = "; ".join(movie(k, i, r) for k, (i, r) in enumerate(zip(items, ratings)))
+    parts = [movie(k, i, r) for k, (i, r) in enumerate(zip(items, ratings))]
     user_line = f"User: {d.profiles[user]}\n" if prompt == "profile" else ""
-    return f"{user_line}Watched (rating 1-5): {movies}\nNext:"
+    head = f"{user_line}Watched (rating 1-5): "
+    text = head + "; ".join(parts) + "\nNext:"
+    if not ends:
+        return text
+    seps, c = [], len(head)
+    for part in parts[:-1]:
+        c += len(part)
+        seps.append(c)
+        c += 2  # "; "
+    return text, seps
 
 
 class GenRec(nn.Module):
@@ -53,13 +65,16 @@ class GenRec(nn.Module):
     def encode(self, tokens):  # left-padded -> (B, d), last token
         return self.norm(self.hidden(tokens)[:, -1].float())
 
-    def encode_lm(self, tokens, title_len):
-        """Prompt + target title in one pass: h at the last prompt token (before the title),
-        LM loss on the title tokens."""
+    def encode_at(self, tokens, rows, pos):  # GenRec-AP without LM loss: h at the given (row, position) pairs
+        return self.norm(self.hidden(tokens)[rows, pos].float())
+
+    def encode_lm(self, tokens, title_len, at=None):
+        """Prompt + target title in one pass: h at the last prompt token (before the title), or at the
+        (rows, positions) in `at` (GenRec-AP); LM loss on the title tokens."""
         H = self.hidden(tokens)
         L = H.size(1)
-        rows = torch.arange(H.size(0), device=H.device)
-        h = self.norm(H[rows, L - title_len - 1].float())
+        rows, pos = at or (torch.arange(H.size(0), device=H.device), L - title_len - 1)
+        h = self.norm(H[rows, pos].float())
         b, pos = zip(*[(i, L - n - 1 + k) for i, n in enumerate(title_len.tolist()) for k in range(n)])
         b, pos = torch.tensor(b, device=H.device), torch.tensor(pos, device=H.device)
         logits = self.llm.get_base_model().lm_head(H[b, pos]).float()  # position pos predicts token pos+1
@@ -75,14 +90,15 @@ class Encoder:
     def __init__(self, d, tok, n, device, prompt):
         self.d, self.tok, self.n, self.device, self.prompt = d, tok, n, device, prompt
 
+    def texts(self, users, hist):  # hist is a prefix of the user's sequence -> its ratings are the first len(h)
+        return [verbalize(self.d, h, self.d.ratings[u][:len(h)], self.n, self.prompt, u) for u, h in zip(users, hist)]
+
     def __call__(self, users, hist):
-        texts = [verbalize(self.d, h, self.d.ratings[u], self.n, self.prompt, u) for u, h in zip(users, hist)]
-        return self.tok(texts, return_tensors="pt", padding=True).to(self.device)
+        return self.tok(self.texts(users, hist), return_tensors="pt", padding=True).to(self.device)
 
     def with_titles(self, users, hist, tgt):
         """Prompt followed by the target title (training only); left-padded. Returns tokens, title lengths."""
-        texts = [verbalize(self.d, h, self.d.ratings[u], self.n, self.prompt, u) for u, h in zip(users, hist)]
-        prompts = self.tok(texts)["input_ids"]
+        prompts = self.tok(self.texts(users, hist))["input_ids"]
         titles = self.tok([" " + self.d.movies.title[t] for t in tgt], add_special_tokens=False)["input_ids"]
         seqs = [p + t for p, t in zip(prompts, titles)]
         L, pad = max(map(len, seqs)), self.tok.pad_token_id
@@ -90,6 +106,33 @@ class Encoder:
         mask = torch.tensor([[0] * (L - len(x)) + [1] * len(x) for x in seqs])
         tokens = {"input_ids": ids.to(self.device), "attention_mask": mask.to(self.device)}
         return tokens, torch.tensor([len(t) for t in titles], device=self.device)
+
+    def all_positions(self, samples, titles):
+        """GenRec-AP batch from all_position_samples. Each movie s[j], j in [first, end), is a query for s[j + 1]:
+        h at the ';' after it (causal: sees movies up to s[j] only), or at the last prompt token for the final movie,
+        as in evaluation. titles=True appends the title of s[end] for the LM loss.
+        Returns tokens (left-padded), title lengths, query (rows, positions), targets."""
+        seqs, title_lens, queries = [], [], []
+        for u, end, first in samples:
+            s = self.d.seqs[u]
+            text, seps = verbalize(self.d, s[:end], self.d.ratings[u][:end], self.n, self.prompt, u, ends=True)
+            enc = self.tok(text, return_offsets_mapping=True)
+            ids, tok_end = enc["input_ids"], [z for _, z in enc["offset_mapping"]]
+            q = [bisect.bisect_right(tok_end, c) for c in seps]  # token holding the ';' at char c
+            assert all(not text[c + 1:tok_end[t]].strip() for c, t in zip(seps, q)), "';' token runs into the next movie"
+            q.append(len(ids) - 1)
+            start = max(0, end - self.n)  # s[start] is the first movie in the prompt
+            queries.append([(q[j - start], s[j + 1]) for j in range(first, end)])
+            title = self.tok(" " + self.d.movies.title[s[end]], add_special_tokens=False)["input_ids"] if titles else []
+            seqs.append(ids + title)
+            title_lens.append(len(title))
+        L, pad = max(map(len, seqs)), self.tok.pad_token_id
+        ids = torch.tensor([[pad] * (L - len(x)) + x for x in seqs])
+        mask = torch.tensor([[0] * (L - len(x)) + [1] * len(x) for x in seqs])
+        rows, pos, tgt = zip(*[(b, L - len(x) + p, t) for b, (x, qs) in enumerate(zip(seqs, queries)) for p, t in qs])
+        tokens = {"input_ids": ids.to(self.device), "attention_mask": mask.to(self.device)}
+        dev = lambda x: torch.tensor(x, device=self.device)
+        return tokens, dev(title_lens), (dev(rows), dev(pos)), dev(tgt)
 
 
 def score_fn(model, enc):
@@ -109,7 +152,20 @@ def train_samples(d, per_user):
     return out
 
 
+def all_position_samples(d, n):
+    """GenRec-AP: (user, end, first) chunks that use every train target once per epoch (random offset per user).
+    The prompt holds the n movies before s[end]; movies s[first..end-1] each predict the next one."""
+    out = []
+    for u, s in enumerate(d.split("train")[0]):
+        ends = list(range(random.randint(1, n), len(s) - 1, n)) + [len(s) - 1]
+        out += [(u, end, first) for first, end in zip([0] + ends, ends)]
+    random.shuffle(out)
+    return out
+
+
 def train(args):
+    if args.all_positions and args.rating_weight:
+        raise ValueError("--rating_weight is not supported with --all_positions")
     run = start_run("genrec", args)
     torch.manual_seed(args.seed)
     random.seed(args.seed)
@@ -137,8 +193,12 @@ def train(args):
         {"params": [*model.norm.parameters(), *model.item.parameters()], "lr": args.head_lr},
     ])
     # linear warmup -> linear decay to 0 (standard for LLM fine-tuning; without it training can collapse to popularity)
-    n_samples = sum(min(args.samples_per_user, len(s) - 1) for s in d.split("train")[0])
-    total_steps = args.epochs * -(-n_samples // args.batch_size)
+    if args.all_positions:  # chunks drawn up front so the schedule knows the step count
+        ap_epochs = [all_position_samples(d, args.history) for _ in range(args.epochs)]
+        total_steps = sum(-(-len(s) // args.batch_size) for s in ap_epochs)
+    else:
+        n_samples = sum(min(args.samples_per_user, len(s) - 1) for s in d.split("train")[0])
+        total_steps = args.epochs * -(-n_samples // args.batch_size)
     warmup = max(1, int(args.warmup * total_steps))
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda t: min((t + 1) / warmup, max(0.0, (total_steps - t) / (total_steps - warmup))))
@@ -148,16 +208,22 @@ def train(args):
     t0, global_step = time.time(), 0
     for epoch in range(1, args.epochs + 1):
         model.train()
-        samples = train_samples(d, args.samples_per_user)
+        samples = ap_epochs[epoch - 1] if args.all_positions else train_samples(d, args.samples_per_user)
         total = window = 0.0
         for step, i in enumerate(range(0, len(samples), args.batch_size), 1):
-            users, hist, tgt, rating = zip(*samples[i:i + args.batch_size])
-            if args.lm_weight > 0:  # paper: L = α·L_rank + β·L_language, α + β = 1
-                h, lm_loss = model.encode_lm(*enc.with_titles(users, hist, tgt))
+            if args.all_positions:  # every movie in the prompt predicts the next one
+                tokens, title_len, at, tgt = enc.all_positions(samples[i:i + args.batch_size], args.lm_weight > 0)
+                h, lm_loss = model.encode_lm(tokens, title_len, at) if args.lm_weight > 0 \
+                    else (model.encode_at(tokens, *at), 0.0)
             else:
-                h, lm_loss = model.encode(enc(users, hist)), 0.0
+                users, hist, tgt, rating = zip(*samples[i:i + args.batch_size])
+                tgt = torch.tensor(tgt, device=device)
+                if args.lm_weight > 0:  # paper: L = α·L_rank + β·L_language, α + β = 1
+                    h, lm_loss = model.encode_lm(*enc.with_titles(users, hist, tgt.tolist()))
+                else:
+                    h, lm_loss = model.encode(enc(users, hist)), 0.0
             logits = model.score(h)
-            loss = F.cross_entropy(logits, torch.tensor(tgt, device=device), reduction="none")
+            loss = F.cross_entropy(logits, tgt, reduction="none")
             if args.rating_weight:  # paper's reward weighting: weight by rating, mean 1 per batch
                 w = torch.tensor(rating, device=device, dtype=torch.float)
                 loss = loss * w / w.mean()
@@ -216,6 +282,8 @@ if __name__ == "__main__":
     p.add_argument("--clip", type=float, default=1.0, help="grad norm clip")
     p.add_argument("--rating_weight", action="store_true", help="weight loss by target rating")
     p.add_argument("--lm_weight", type=float, default=0.0, help="β for the paper's language loss on the target title")
+    p.add_argument("--all_positions", action="store_true",
+                   help="GenRec-AP (not in the paper): rank the next movie after every movie in the prompt")
     p.add_argument("--resume", help="checkpoint (.pt) to start from, e.g. runs/<run>/best.pt")
     p.add_argument("--seed", type=int, default=42)
     train(p.parse_args())

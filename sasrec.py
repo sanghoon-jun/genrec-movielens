@@ -49,6 +49,17 @@ def pad_left(seqs, L):
     return out
 
 
+def chunks(seqs, L):
+    """SASRec (chunked): windows of L + 1 items with a random offset, so every train target is used once per epoch
+    (the default trains on each user's last L + 1 items only)."""
+    out = []
+    for s in seqs:
+        o = random.randint(1, L)
+        out.append(s[:o + 1])                                    # targets 1..o
+        out += [s[i:i + L + 1] for i in range(o, len(s) - 1, L)]  # targets i+1..i+L
+    return out
+
+
 def score_fn(model, device):
     def f(users, hist):
         model.eval()
@@ -75,10 +86,11 @@ def train(args):
     t0, global_step = time.time(), 0
     for epoch in range(1, args.epochs + 1):
         model.train()
-        random.shuffle(train_seqs)
+        seqs = chunks(train_seqs, args.max_len) if args.chunk else train_seqs
+        random.shuffle(seqs)
         total = 0.0
-        for i in range(0, len(train_seqs), args.batch_size):
-            batch = pad_left(train_seqs[i:i + args.batch_size], args.max_len + 1).to(device)
+        for i in range(0, len(seqs), args.batch_size):
+            batch = pad_left(seqs[i:i + args.batch_size], args.max_len + 1).to(device)
             x, y = batch[:, :-1], batch[:, 1:]
             logits = model.score(model.encode(x))
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.reshape(-1), ignore_index=0)
@@ -117,5 +129,6 @@ if __name__ == "__main__":
     p.add_argument("--layers", type=int, default=2)
     p.add_argument("--heads", type=int, default=1)
     p.add_argument("--dropout", type=float, default=0.2)
+    p.add_argument("--chunk", action="store_true", help="train on every position via max_len + 1 windows")
     p.add_argument("--seed", type=int, default=42)
     train(p.parse_args())

@@ -60,7 +60,7 @@ def main_runs():
         a = info["args"] if info else {}
         faithful = p.name.startswith("sasrec") or (a.get("lm_weight", 0) > 0 and a.get("epochs") == 3)
         if info and faithful and not a.get("users") and a.get("seed", 42) == 42 and not a.get("rating_weight") \
-                and a.get("history", 20) == 20:
+                and a.get("history", 20) == 20 and not a.get("all_positions") and not a.get("chunk"):
             yield p, info  # results.md shows the full faithful recipe only (LM loss, 3 epochs)
 
 
