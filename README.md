@@ -8,7 +8,7 @@ A public-data reproduction of [GenRec: An LLM-Backed Recommendation Ranker at Ne
 
 **Answer:** not as the paper describes it. The best faithful GenRec (Qwen2.5-3B, `profile` prompt) reaches test NDCG@10 **0.1615**, 11% below SASRec's **0.1820**. Scaling to 7B does not close the gap (0.1610).
 
-With one change it does: **GenRec-AP** (`--all_positions`, not in the paper) ranks the next movie after every movie in the prompt, as SASRec does, not only after the last one. At 0.5B it reaches **0.1926**, 6% above SASRec (tuned) and level with SASRec trained on every position the same way (0.1905). The gap was the training signal (one label per prompt), not model size or prompt. The GenRec-AP size × prompt grid is running ([plan](docs/plan.md)).
+With one change it does: **GenRec-AP** (`--all_positions`, not in the paper) ranks the next movie after every movie in the prompt, as SASRec does, not only after the last one. Every size × prompt cell then beats SASRec (tuned), by 5–10%; the best, 3B `profile`, reaches **0.2004**. Against SASRec trained on every position the same way (SASRec (chunked), 0.1905), 0.5B and 1.5B are level and 3B is 4–5% ahead. The gap was the training signal (one label per prompt), not model size or prompt.
 
 | Size \ prompt | genres | profile | synopsis |
 |---|---|---|---|
@@ -17,7 +17,15 @@ With one change it does: **GenRec-AP** (`--all_positions`, not in the paper) ran
 | 3B | 0.1595 | **0.1615** | 0.1580 |
 | 7B | – | 0.1610 | – |
 
-Test NDCG@10, full faithful recipe. SASRec (tuned) 0.1820 · SASRec (chunked) 0.1905 · GenRec-AP 0.5B profile 0.1926 · Popularity 0.0180. All metrics, training curves and settings: [docs/results.md](docs/results.md).
+Test NDCG@10, full faithful recipe. SASRec (tuned) 0.1820 · Popularity 0.0180.
+
+| GenRec-AP: size \ prompt | genres | profile | synopsis |
+|---|---|---|---|
+| 0.5B | 0.1919 | 0.1926 | 0.1921 |
+| 1.5B | 0.1903 | 0.1924 | 0.1916 |
+| 3B | 0.1973 | **0.2004** | 0.1981 |
+
+Test NDCG@10, GenRec-AP. SASRec (chunked) 0.1905. All metrics, training curves and settings: [docs/results.md](docs/results.md).
 
 ![Scaling](docs/figures/scaling.png)
 
