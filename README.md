@@ -8,7 +8,7 @@ A public-data reproduction of [GenRec: An LLM-Backed Recommendation Ranker at Ne
 
 **Answer:** not as the paper describes it. The best faithful GenRec (Qwen2.5-3B, `profile` prompt) reaches test NDCG@10 **0.1615**, 11% below SASRec's **0.1820**. Scaling to 7B does not close the gap (0.1610).
 
-With one change it does: **GenRec-AP** (`--all_positions`, not in the paper) ranks the next movie after every movie in the prompt, as SASRec does, not only after the last one. Every size × prompt cell then beats SASRec (tuned), by 5–10%; the best, 3B `profile`, reaches **0.2004**. Against SASRec trained on every position the same way (SASRec (chunked), 0.1905), 0.5B and 1.5B are level and 3B is 4–5% ahead. The gap was the training signal (one label per prompt), not model size or prompt.
+With one change it does: **GenRec-AP** (`--all_positions`, not in the paper) ranks the next movie after every movie in the prompt, as SASRec does, not only after the last one. Every size × prompt cell then beats SASRec (tuned), by 5–10%; the best, 3B `profile`, reaches **0.2004**. Against SASRec trained on every position the same way (SASRec (chunked), 0.1905), 0.5B and 1.5B are level and 3B is 4–5% ahead (3B profile over two seeds: 0.1989, +4.4%). The gap was the training signal (one label per prompt), not model size or prompt.
 
 | Size \ prompt | genres | profile | synopsis |
 |---|---|---|---|

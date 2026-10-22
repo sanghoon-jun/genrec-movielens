@@ -10,6 +10,8 @@ Remaining work. Overview → [README](../README.md) · results → [results.md](
 | GenRec-AP grid: 0.5B genres, synopsis | ✅ 0.1919, 0.1921 | Local | 2.5 h + 4.1 h | $0 |
 | GenRec-AP grid: 1.5B genres, profile, synopsis | ✅ 0.1903, 0.1924, 0.1916 | Local | 6.8 + 7.1 + 9.9 h | $0 |
 | GenRec-AP grid: 3B genres, profile, synopsis | ✅ 0.1973, **0.2004**, 0.1981 | Local | 13.9 + 14.2 + 19.5 h | $0 |
+| GenRec-AP 3B profile, seed 43 (is the lead over SASRec (chunked) real?) | ✅ test 0.1973 (seed 42: 0.2004; mean 0.1989, +4.4%) | Local | 14.5 h | $0 |
+| GenRec-AP 3B profile, 5 epochs (valid still rising at epoch 3) | ✅ test 0.1915 (best valid at epoch 3, 0.1970 < 0.2049 for 3 epochs): worse, keep 3 epochs | Local | 23.6 h | $0 |
 | 0.5B profile + LM loss, history 50 (ablation) | ❌ stopped 2026-10-12 in epoch 2 (epoch 1 checkpoint kept) | Local | ~30 h | $0 |
 
 ## Later: beyond the faithful recipe (to discuss)
